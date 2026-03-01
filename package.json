@@ -26,7 +26,10 @@
     "react-redux": "^9.2.0",
     "react-reflex": "^5.0.5",
     "react-router-dom": "^7.13.0",
+<<<<<<< HEAD
     "reactflow": "^11.11.4",
+=======
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
     "tldraw": "^4.3.0",
     "typescript": "^5.9.3",
     "uuid": "^13.0.0",

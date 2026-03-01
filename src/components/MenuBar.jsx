@@ -1,13 +1,25 @@
 // src/components/MenuBar.jsx
+<<<<<<< HEAD
+=======
+
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { setActiveBranch, closeAllFiles, closeFile } from '../store/slices/fileSystemSlice';
+<<<<<<< HEAD
 // 💡 openCodeMap 임포트 추가
 import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal, openCodeMap } from '../store/slices/uiSlice';
 import { DebugSocket } from '../utils/debugSocket'; 
 import { RunSocket } from '../utils/runSocket'; 
 import { VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh } from "react-icons/vsc";
+=======
+import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal } from '../store/slices/uiSlice';
+import { DebugSocket } from '../utils/debugSocket'; 
+import { RunSocket } from '../utils/runSocket'; 
+import { VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh } from "react-icons/vsc";
+// 💡 updateGitUrlApi는 더 이상 여기서 안 쓰므로 뺐습니다.
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
 import { fetchBranchListApi, createBranchApi, saveFileApi } from '../utils/api'; 
 
 const getLanguageFromPath = (path) => {
@@ -107,6 +119,10 @@ export default function MenuBar() {
               }
               try {
                   const content = fileContents[activeFileId] || '';
+<<<<<<< HEAD
+=======
+                  // 💡 [수정] 저장할 때 기준도 master로!
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   if (!isTerminalVisible) dispatch(toggleTerminal());
                   dispatch(writeToTerminal(`[System] Saved: ${activeFileId}\n`));
@@ -116,10 +132,23 @@ export default function MenuBar() {
               }
               break;
           case '다른 이름으로...':
+<<<<<<< HEAD
           case '모두 저장':
           case '내보내기':
               if (!isTerminalVisible) dispatch(toggleTerminal());
               dispatch(writeToTerminal(`[System] ${itemName} 기능 준비 중입니다.\n`));
+=======
+              if (!isTerminalVisible) dispatch(toggleTerminal());
+              dispatch(writeToTerminal('[System] 다른 이름으로 저장 기능 준비 중입니다.\n'));
+              break;
+          case '모두 저장':
+              if (!isTerminalVisible) dispatch(toggleTerminal());
+              dispatch(writeToTerminal('[System] 모든 변경사항을 저장합니다.\n'));
+              break;
+          case '내보내기':
+              if (!isTerminalVisible) dispatch(toggleTerminal());
+              dispatch(writeToTerminal('[System] 프로젝트 내보내기를 시작합니다.\n'));
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
               break;
           case '닫기':
               dispatch(closeFile(activeFileId));
@@ -175,6 +204,10 @@ export default function MenuBar() {
 
               try {
                   const content = fileContents[activeFileId] || '';
+<<<<<<< HEAD
+=======
+                  // 💡 [수정]
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   dispatch(writeToTerminal(`\r\n[System] 코드를 자동 저장했습니다: ${activeFileId}\r\n`));
               } catch (error) {
@@ -192,7 +225,11 @@ export default function MenuBar() {
                   DebugSocket.startDebug(
                       workspaceId, 
                       activeProject, 
+<<<<<<< HEAD
                       activeBranch || 'master',
+=======
+                      activeBranch || 'master', // 💡 [수정]
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                       activeFileId, 
                       currentFileBreakpoints 
                   );
@@ -210,6 +247,10 @@ export default function MenuBar() {
               
               try {
                   const content = fileContents[activeFileId] || '';
+<<<<<<< HEAD
+=======
+                  // 💡 [수정]
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   dispatch(writeToTerminal(`\r\n[System] 코드를 자동 저장했습니다: ${activeFileId}\r\n`));
               } catch (error) {
@@ -224,7 +265,11 @@ export default function MenuBar() {
                   type: 'RUN',
                   workspaceId: workspaceId,
                   projectName: activeProject,
+<<<<<<< HEAD
                   branchName: activeBranch || 'master',
+=======
+                  branchName: activeBranch || 'master', // 💡 [수정]
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                   filePath: activeFileId,
                   language: language
               };
@@ -272,7 +317,11 @@ export default function MenuBar() {
                   body: JSON.stringify({
                       workspaceId: workspaceId,
                       projectName: activeProject,
+<<<<<<< HEAD
                       branchName: activeBranch || 'master'
+=======
+                      branchName: activeBranch || 'master' // 💡 [수정]
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                   })
               })
               .then(async (res) => {
@@ -322,6 +371,7 @@ export default function MenuBar() {
               dispatch(writeToTerminal('[System] 빌드를 취소했습니다.\n'));
               break;
 
+<<<<<<< HEAD
           // 💡 [핵심] 맵 관련 액션 분리
           case '전체 화면':
               dispatch(openCodeMap('full'));
@@ -333,6 +383,13 @@ export default function MenuBar() {
           case '정보':
           case '문서':
           case '키보드 단축키':
+=======
+          case '정보':
+          case '문서':
+          case '키보드 단축키':
+          case '전체 화면':
+          case '분할 화면':
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
           case 'Commit & Merge':
           case 'Repository Settings':
               if (!isTerminalVisible) dispatch(toggleTerminal());
@@ -449,10 +506,18 @@ export default function MenuBar() {
     ]}
   ];
 
+<<<<<<< HEAD
   const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
 
   return (
     <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0 z-40">
+=======
+  // 💡 [수정] URL 여부와 상관없이 오직 브랜치 이름만 표시!
+  const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
+
+  return (
+    <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0">
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
       <div className="flex items-center justify-between px-6 h-12 relative">
         <div className="font-extrabold text-xl tracking-tight text-black cursor-pointer" onClick={() => navigate('/')}>VSIDE</div>
         <div className="flex items-center gap-8 text-[13px] font-medium text-gray-600">
@@ -524,6 +589,10 @@ export default function MenuBar() {
                             <p className="text-[10px] text-gray-500 truncate">Project: {activeProject}</p>
                         </div>
                         
+<<<<<<< HEAD
+=======
+                        {/* 💡 [핵심] URL 연동 폼을 싹 덜어내고, 오직 로컬 브랜치 목록만 보여줍니다! */}
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                         <div className="max-h-40 overflow-y-auto">
                             {branches.map(branch => (
                                 <div 

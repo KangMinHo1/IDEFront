@@ -25,6 +25,7 @@ const getFileIcon = (name) => {
     }
 };
 
+<<<<<<< HEAD
 // 💡 [수정] selectedFileProject 프롭스 추가 (하이라이트를 위해 현재 선택된 파일의 소속 프로젝트를 받음)
 const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandProject, onFileClick, onContextMenu }) => {
     const { activeFileId, activeProject } = useSelector(state => state.fileSystem);
@@ -47,26 +48,51 @@ const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandP
     const getIcon = () => {
         if (isProject) return <VscRepo className="text-blue-600" />;
         if (isFolder) return <VscFolder className="text-yellow-500" />;
+=======
+const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, onContextMenu }) => {
+    const { activeFileId, activeProject } = useSelector(state => state.fileSystem);
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    const currentProjectName = node.type === 'project' ? node.name : projectName;
+
+    const getIcon = () => {
+        if (node.type === 'project') return <VscRepo className="text-blue-600" />;
+        if (node.type === 'folder') return <VscFolder className="text-yellow-500" />;
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
         return getFileIcon(node.name);
     };
 
     const handleClick = async (e) => {
         e.stopPropagation();
 
+<<<<<<< HEAD
         if (isProject) {
+=======
+        if (node.type === 'project') {
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
             if (!isExpanded && (!node.children || node.children.length === 0)) {
                 await onExpandProject(node.name);
             }
             setIsExpanded(!isExpanded);
+<<<<<<< HEAD
         } else if (isFolder) {
             setIsExpanded(!isExpanded); 
+=======
+        } else if (node.type === 'folder') {
+            setIsExpanded(!isExpanded);
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
         } else {
             onFileClick(node, currentProjectName);
         }
     };
 
+<<<<<<< HEAD
     // 💡 [핵심 수정] 파일 이름이 같더라도, 클릭했던 프로젝트와 현재 렌더링 중인 프로젝트가 일치할 때만 파란색 칠하기!
     const isSelected = activeFileId === node.id && selectedFileProject === currentProjectName;
+=======
+    const isSelected = activeFileId === node.id;
+    const isStartupProject = node.type === 'project' && activeProject === node.name;
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
 
     return (
         <div className="select-none font-sans">
@@ -81,11 +107,18 @@ const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandP
             >
                 <div className="flex items-center overflow-hidden">
                     <span className="mr-1.5 opacity-60 text-gray-500 shrink-0">
+<<<<<<< HEAD
                         {isFolder ? (
                             isExpanded ? <VscChevronDown size={14} /> : <VscChevronRight size={14} />
                         ) : (
                             <span className="w-[14px] inline-block"/>
                         )}
+=======
+                        {(node.type === 'folder' || node.type === 'project') && (
+                            isExpanded ? <VscChevronDown size={14} /> : <VscChevronRight size={14} />
+                        )}
+                        {node.type === 'file' && <span className="w-[14px] inline-block"/>}
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                     </span>
                     <span className="mr-1.5 shrink-0">{getIcon()}</span>
                     <span className={`truncate ${node.name.startsWith('.') ? 'opacity-50' : ''} ${isStartupProject ? 'font-bold text-blue-700' : ''}`}>
@@ -104,11 +137,18 @@ const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandP
                 <div>
                     {node.children.map(child => (
                         <FileTreeItem 
+<<<<<<< HEAD
                             key={child.id || child.name} 
                             node={child} 
                             depth={depth + 1} 
                             projectName={currentProjectName}
                             selectedFileProject={selectedFileProject} // 💡 자식에게도 전달
+=======
+                            key={child.id} 
+                            node={child} 
+                            depth={depth + 1} 
+                            projectName={currentProjectName}
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                             onExpandProject={onExpandProject}
                             onFileClick={onFileClick}
                             onContextMenu={onContextMenu}
@@ -129,6 +169,7 @@ export default function Sidebar() {
   const inputRef = useRef(null);
   const [contextMenu, setContextMenu] = useState(null); 
   
+<<<<<<< HEAD
   // 💡 [핵심 추가] 시작 프로젝트(activeProject)와 별개로, '현재 하이라이트 될 파일의 소속 프로젝트'를 따로 기억합니다.
   const [selectedFileProject, setSelectedFileProject] = useState(activeProject);
 
@@ -144,6 +185,13 @@ export default function Sidebar() {
               files = response.children;
           }
 
+=======
+  const handleExpandProject = async (projectName) => {
+      try {
+          // 💡 [수정] 기본값을 master로 변경
+          const branchToFetch = (projectName === activeProject && activeBranch) ? activeBranch : "master";
+          const files = await fetchProjectFilesApi(workspaceId, projectName, branchToFetch);
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
           dispatch(mergeProjectFiles({ projectName, files }));
       } catch (e) {
           console.error("파일 로드 실패:", e);
@@ -153,11 +201,15 @@ export default function Sidebar() {
   useEffect(() => {
       if (workspaceId && activeProject) {
           handleExpandProject(activeProject);
+<<<<<<< HEAD
           setSelectedFileProject(activeProject); // 프로젝트가 바뀌면 초기화
+=======
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
       }
   }, [activeBranch, workspaceId, activeProject]);
 
   const handleFileClick = async (node, realProjectName) => {
+<<<<<<< HEAD
       const targetProject = realProjectName || activeProject; 
       
       // 💡 [수정] 시작 프로젝트(activeProject)는 냅두고, 하이라이트용 상태만 바꿉니다! (자동 전환 기능 제거)
@@ -165,6 +217,13 @@ export default function Sidebar() {
       dispatch(openFile(node));
       
       try {
+=======
+      dispatch(openFile(node));
+      const targetProject = realProjectName || activeProject; 
+      
+      try {
+          // 💡 [수정] 기본값을 master로 변경
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
           const branchToFetch = (targetProject === activeProject && activeBranch) ? activeBranch : "master";
           const content = await fetchFileContentApi(workspaceId, targetProject, branchToFetch, node.id);
           dispatch(updateFileContent({ filePath: node.id, content: content }));
@@ -219,16 +278,24 @@ export default function Sidebar() {
   const handleContextMenu = (e, node) => {
       e.preventDefault();
       e.stopPropagation();
+<<<<<<< HEAD
       
       const nodeType = String(node.type || '').toLowerCase();
       
+=======
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
       setContextMenu({
           x: e.clientX,
           y: e.clientY,
           fileId: node.id,
           path: node.id, 
+<<<<<<< HEAD
           type: nodeType,
           isRoot: nodeType === 'project'
+=======
+          type: node.type,
+          isRoot: node.type === 'project'
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
       });
   };
 
@@ -281,11 +348,18 @@ export default function Sidebar() {
           {tree && Array.isArray(tree.children) && tree.children.length > 0 ? (
               tree.children.map(projectNode => (
                   <FileTreeItem 
+<<<<<<< HEAD
                       key={projectNode.id || projectNode.name} 
                       node={projectNode} 
                       depth={0} 
                       projectName={projectNode.name} 
                       selectedFileProject={selectedFileProject} // 💡 추가됨
+=======
+                      key={projectNode.id} 
+                      node={projectNode} 
+                      depth={0} 
+                      projectName={projectNode.name} 
+>>>>>>> 92418e7ef41ca5cb3e39631db7edbf9a402fcbb7
                       onExpandProject={handleExpandProject} 
                       onFileClick={handleFileClick}
                       onContextMenu={handleContextMenu}
