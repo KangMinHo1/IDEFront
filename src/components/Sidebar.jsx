@@ -86,9 +86,12 @@ const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, 
                 )}
             </div>
 
+            {/* 💡 [핵심 수정] 자식 렌더링 시 $$codemap$$ 이라는 이름을 가진 요소는 아예 화면에서 지워버립니다! */}
             {isExpanded && Array.isArray(node.children) && (
                 <div>
-                    {node.children.map(child => (
+                    {node.children
+                        .filter(child => child.name !== '$$codemap$$' && !child.name.includes('$$codemap$$')) 
+                        .map(child => (
                         <FileTreeItem 
                             key={child.id} 
                             node={child} 
@@ -116,7 +119,6 @@ export default function Sidebar() {
   
   const handleExpandProject = async (projectName) => {
       try {
-          // 💡 [수정] 기본값을 master로 변경
           const branchToFetch = (projectName === activeProject && activeBranch) ? activeBranch : "master";
           const files = await fetchProjectFilesApi(workspaceId, projectName, branchToFetch);
           dispatch(mergeProjectFiles({ projectName, files }));
@@ -136,7 +138,6 @@ export default function Sidebar() {
       const targetProject = realProjectName || activeProject; 
       
       try {
-          // 💡 [수정] 기본값을 master로 변경
           const branchToFetch = (targetProject === activeProject && activeBranch) ? activeBranch : "master";
           const content = await fetchFileContentApi(workspaceId, targetProject, branchToFetch, node.id);
           dispatch(updateFileContent({ filePath: node.id, content: content }));
@@ -164,7 +165,10 @@ export default function Sidebar() {
     if (!name) { dispatch(endCreation()); return; }
     try {
         let path = name; 
-        if(parentId !== 'root-folder') path = parentId + "/" + name; 
+        
+        if(parentId !== 'root-folder' && parentId !== '') {
+            path = parentId + "/" + name; 
+        }
         
         await createFileApi(workspaceId, activeProject, activeBranch, path, pendingCreation.type);
         
@@ -228,6 +232,23 @@ export default function Sidebar() {
       setContextMenu(null);
   };
 
+  const handleContextMenuNew = (creationType) => {
+      if (!contextMenu) return;
+
+      let parentId = contextMenu.path;
+      
+      if (contextMenu.type === 'project') {
+          parentId = '';
+      } else if (contextMenu.type === 'file') {
+          const pathParts = parentId.split('/');
+          pathParts.pop(); 
+          parentId = pathParts.join('/'); 
+      }
+
+      dispatch(startCreation({ type: creationType, parentId: parentId }));
+      setContextMenu(null); 
+  };
+
   if (!isSidebarVisible) return null;
 
   return (
@@ -236,8 +257,10 @@ export default function Sidebar() {
            <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">워크스페이스 탐색기</span>
            <div className="flex gap-2 text-gray-500">
                <VscRefresh className="cursor-pointer hover:text-black transition-colors" onClick={refreshWorkspace} title="새로고침"/>
-               <VscNewFile className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'file', parentId: activeProject || 'root-folder' })); }} title="새 파일" />
-               <VscNewFolder className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'folder', parentId: activeProject || 'root-folder' })); }} title="새 폴더" />
+               
+               <VscNewFile className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'file', parentId: activeProject ? '' : 'root-folder' })); }} title="새 파일" />
+               <VscNewFolder className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'folder', parentId: activeProject ? '' : 'root-folder' })); }} title="새 폴더" />
+               
                <VscCollapseAll className="cursor-pointer hover:text-black transition-colors" title="모두 접기" />
            </div>
        </div>
@@ -283,6 +306,21 @@ export default function Sidebar() {
              className="fixed bg-white border border-gray-200 shadow-[0_4px_12px_rgba(0,0,0,0.1)] rounded-md py-1.5 w-48 z-[9999]"
              style={{ top: contextMenu.y, left: contextMenu.x }}
            >
+               <div 
+                   className="px-4 py-1.5 hover:bg-gray-100 cursor-pointer text-[13px] flex items-center gap-2 text-gray-700 transition-colors" 
+                   onClick={() => handleContextMenuNew('file')}
+               >
+                   <VscNewFile size={14} className="text-gray-500" /> 새 파일 (New File)
+               </div>
+               <div 
+                   className="px-4 py-1.5 hover:bg-gray-100 cursor-pointer text-[13px] flex items-center gap-2 text-gray-700 transition-colors" 
+                   onClick={() => handleContextMenuNew('folder')}
+               >
+                   <VscNewFolder size={14} className="text-gray-500" /> 새 폴더 (New Folder)
+               </div>
+
+               <div className="h-[1px] bg-gray-100 my-1 mx-2"/>
+
                {contextMenu.isRoot && (
                    <>
                        <div 

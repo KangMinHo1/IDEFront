@@ -7,6 +7,55 @@ import { setActiveProject, setActiveBranch, closeAllFiles } from '../store/slice
 import { updateProjectGitInfo } from '../store/slices/fileSystemSlice'; 
 import { fetchGitStatusApi, stageFilesApi, unstageFilesApi, commitChangesApi, fetchBranchListApi, pushToRemoteApi, pullFromRemoteApi, fetchGitHistoryApi, resetCommitApi, checkoutCommitApi, mergeCommitApi, updateGitUrlApi, abortMergeApi } from '../utils/api'; 
 
+// 💡 [핵심 마법] 백엔드가 준 텍스트 그래프(* | / \)를 분석해서 색깔과 연결선을 그려주는 렌더러!
+const renderGraph = (graphStr) => {
+    if (!graphStr) return null;
+    
+    // VS Code / Sourcetree 스타일의 브랜치 라인별 색상 팔레트
+    const colors = ['#3b82f6', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#14b8a6', '#ef4444'];
+    
+    return graphStr.split('').map((char, idx) => {
+        // 공백 처리
+        if (char === ' ') return <span key={idx} className="inline-block h-full shrink-0" style={{ width: '12px' }}></span>;
+        
+        // 💡 1. 가로 위치(Index)를 기반으로 브랜치 색상 배정! (갈라지면 다른 색이 됨)
+        const colorIndex = Math.floor(idx / 2) % colors.length;
+        const color = colors[colorIndex];
+        
+        // 💡 2. Fast-Forward 연결선 해결! (모든 점과 선 뒤에 100% 높이의 세로선을 깔아버림)
+        if (char === '*') {
+            return (
+                <span key={idx} className="relative h-full inline-flex items-center justify-center shrink-0" style={{ width: '12px', color }}>
+                    {/* 상/하를 완벽하게 이어주는 뼈대 연결선 */}
+                    <span className="absolute w-[2px] bg-current h-[200%] z-0"></span>
+                    {/* 진짜 IDE처럼 예쁜 가운데 뚫린 동그라미 커밋 점 */}
+                    <div className="relative z-10 w-2.5 h-2.5 rounded-full border-[2.5px] border-current bg-white"></div>
+                </span>
+            );
+        }
+        
+        if (char === '|') {
+            return (
+                <span key={idx} className="relative h-full inline-flex items-center justify-center shrink-0" style={{ width: '12px', color }}>
+                    <span className="absolute w-[2px] bg-current h-[200%] z-0"></span>
+                </span>
+            );
+        }
+
+        // 사선(/, \) 디자인 다듬기
+        let displayChar = char;
+        let transform = 'scale(1)';
+        if (char === '/') { displayChar = '╱'; transform = 'scale(1.2)'; }
+        if (char === '\\') { displayChar = '╲'; transform = 'scale(1.2)'; }
+
+        return (
+            <span key={idx} className="relative h-full inline-flex items-center justify-center shrink-0" style={{ width: '12px', color, transform, fontWeight: 'bold' }}>
+                {displayChar}
+            </span>
+        );
+    });
+};
+
 export default function GitDashboard() {
     const dispatch = useDispatch();
     const { workspaceId, activeProject, activeBranch, projectList } = useSelector(state => state.fileSystem);
@@ -14,7 +63,6 @@ export default function GitDashboard() {
     const [commitMessage, setCommitMessage] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     
-    // 💡 [UX] 병합 충돌 상태 관리를 위한 state 추가
     const [unstagedFiles, setUnstagedFiles] = useState([]);
     const [stagedFiles, setStagedFiles] = useState([]);
     const [conflictedFiles, setConflictedFiles] = useState([]); 
@@ -68,12 +116,9 @@ export default function GitDashboard() {
                 const statusData = await fetchGitStatusApi(workspaceId, activeProject, activeBranch || 'master');
                 setStagedFiles(statusData.staged || []);
                 setUnstagedFiles(statusData.unstaged || []);
-                
-                // 💡 [UX] 백엔드에서 넘겨준 충돌 정보 세팅
                 setConflictedFiles(statusData.conflicted || []);
                 setIsMerging(statusData.isMerging || false);
                 
-                // 병합 중이라면 커밋 메시지를 자동으로 채워줍니다!
                 if(statusData.isMerging && !commitMessage) {
                     setCommitMessage("Merge branch and resolve conflicts");
                 }
@@ -93,7 +138,6 @@ export default function GitDashboard() {
     const handleStage = async (filePattern) => { try { setIsLoading(true); await stageFilesApi(workspaceId, activeProject, activeBranch || 'master', filePattern); await loadGitStatus(); } catch (error) { alert(error.message); } finally { setIsLoading(false); } };
     const handleUnstage = async (filePattern) => { try { setIsLoading(true); await unstageFilesApi(workspaceId, activeProject, activeBranch || 'master', filePattern); await loadGitStatus(); } catch (error) { alert(error.message); } finally { setIsLoading(false); } };
 
-    // 💡 [UX] 병합 취소 버튼 액션!
     const handleAbortMerge = async () => {
         if(!window.confirm("정말 병합을 취소하시겠습니까? 해결 중이던 충돌 내역이 모두 날아갑니다!")) return;
         try {
@@ -107,9 +151,7 @@ export default function GitDashboard() {
     };
 
     const handleCommit = async () => {
-        // 💡 [UX] 충돌 파일이 남아있으면 커밋 차단!
         if(conflictedFiles.length > 0) return alert("❌ 아직 해결되지 않은 충돌 파일이 있습니다! \n파일에서 <<<<<< ======= >>>>>> 부분을 수정하고 Stage(Resolve & Stage) 해주세요.");
-        
         if(!commitMessage.trim()) return alert("커밋 메시지를 입력해주세요.");
         if(stagedFiles.length === 0) return alert("커밋할 파일(Staged)이 없습니다!");
         
@@ -126,7 +168,6 @@ export default function GitDashboard() {
     };
 
     const handleRemoteActionClick = (action) => {
-        // 💡 [UX] 병합 중에는 Push, Pull 원천 차단!
         if (isMerging) return alert("⚠️ 현재 병합 충돌 해결 중입니다. 충돌을 먼저 해결하고 커밋해주세요!"); 
         
         const currentProj = projectList.find(p => p.name === activeProject);
@@ -181,7 +222,6 @@ export default function GitDashboard() {
         const targetHash = contextMenu.commit.hash;
         setContextMenu(null);
 
-        // 💡 [UX] 병합 중일 때는 타임머신 탑승(Checkout, Reset 등) 원천 차단!
         if (isMerging) {
             return alert("⚠️ 현재 병합 충돌(Conflict)이 발생하여 작업이 일시정지 되었습니다.\n우측의 파일 상태 탭에서 충돌을 해결하여 커밋하거나, [병합 취소]를 눌러주세요.");
         }
@@ -208,7 +248,6 @@ export default function GitDashboard() {
             }
             await loadGitStatus();
         } catch (e) {
-            // 백엔드에서 충돌(Conflict) 에러가 떨어지면 loadGitStatus를 다시 불러서 UI를 충돌 모드로 전환!
             alert(`오류 발생: ${e.message}`);
             await loadGitStatus(); 
         } finally {
@@ -234,51 +273,16 @@ export default function GitDashboard() {
         <div className="flex-1 flex h-full w-full bg-white font-sans text-[#333] relative">
             
             {contextMenu && (
-                <div 
-                    ref={contextMenuRef}
-                    className="fixed bg-white border border-gray-200 shadow-xl rounded-md py-1 z-[9999] text-sm text-gray-700 w-72"
-                    style={{ top: contextMenu.y, left: contextMenu.x }}
-                >
-                    <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50">
-                        <span className="font-mono text-xs font-bold text-blue-600">Commit: {contextMenu.commit.hash.substring(0,7)}</span>
-                    </div>
-                    <div onClick={() => handleContextMenuAction('checkout')} className="px-4 py-2 hover:bg-blue-50 hover:text-blue-600 cursor-pointer transition-colors flex items-center gap-2">
-                        <VscRepoForked size={16}/> 이 커밋으로 Checkout (Detached HEAD)
-                    </div>
-                    <div onClick={() => handleContextMenuAction('merge')} className="px-4 py-2 hover:bg-blue-50 hover:text-blue-600 cursor-pointer transition-colors flex items-center gap-2">
-                        <VscSourceControl size={16}/> 현재 브랜치로 병합 (Merge)
-                    </div>
-                    <div onClick={() => handleContextMenuAction('reset')} className="px-4 py-2 hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors flex items-center gap-2 text-red-500">
-                        <VscHistory size={16}/> 이 커밋으로 초기화 (Reset Hard)
-                    </div>
+                <div ref={contextMenuRef} className="fixed bg-white border border-gray-200 shadow-xl rounded-md py-1 z-[9999] text-sm text-gray-700 w-72" style={{ top: contextMenu.y, left: contextMenu.x }}>
+                    <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="font-mono text-xs font-bold text-blue-600">Commit: {contextMenu.commit.hash.substring(0,7)}</span></div>
+                    <div onClick={() => handleContextMenuAction('checkout')} className="px-4 py-2 hover:bg-blue-50 hover:text-blue-600 cursor-pointer transition-colors flex items-center gap-2"><VscRepoForked size={16}/> 이 커밋으로 Checkout (Detached HEAD)</div>
+                    <div onClick={() => handleContextMenuAction('merge')} className="px-4 py-2 hover:bg-blue-50 hover:text-blue-600 cursor-pointer transition-colors flex items-center gap-2"><VscSourceControl size={16}/> 현재 브랜치로 병합 (Merge)</div>
+                    <div onClick={() => handleContextMenuAction('reset')} className="px-4 py-2 hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors flex items-center gap-2 text-red-500"><VscHistory size={16}/> 이 커밋으로 초기화 (Reset Hard)</div>
                 </div>
             )}
 
             {showGitUrlModal && (
-                <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center">
-                    <div className="bg-white rounded-lg shadow-xl w-96 p-6 flex flex-col gap-4 animate-fade-in-up">
-                        <div className="flex items-center gap-2 text-lg font-bold text-gray-800">
-                            <VscGithubInverted size={20} className="text-gray-800"/> 원격 저장소 연동
-                        </div>
-                        <p className="text-sm text-gray-600 leading-relaxed">
-                            해당 프로젝트에 연결된 GitHub 저장소가 없습니다.<br/>Push/Pull을 위해 먼저 URL을 연동해주세요.
-                        </p>
-                        <input 
-                            type="text" 
-                            placeholder="https://github.com/username/repo.git" 
-                            value={inputGitUrl} 
-                            onChange={(e) => setInputGitUrl(e.target.value)} 
-                            onKeyDown={(e) => { if(e.key === 'Enter') handleLinkGitUrlAndProceed(); }} 
-                            className="w-full border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500"
-                        />
-                        <div className="flex justify-end gap-2 mt-2">
-                            <button onClick={() => setShowGitUrlModal(false)} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded transition-colors">취소</button>
-                            <button onClick={handleLinkGitUrlAndProceed} disabled={!inputGitUrl.trim() || isLoading} className="px-4 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-black rounded transition-colors flex items-center gap-1 disabled:opacity-50">
-                                연동하기
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center"><div className="bg-white rounded-lg shadow-xl w-96 p-6 flex flex-col gap-4 animate-fade-in-up"><div className="flex items-center gap-2 text-lg font-bold text-gray-800"><VscGithubInverted size={20} className="text-gray-800"/> 원격 저장소 연동</div><p className="text-sm text-gray-600 leading-relaxed">해당 프로젝트에 연결된 GitHub 저장소가 없습니다.<br/>Push/Pull을 위해 먼저 URL을 연동해주세요.</p><input type="text" placeholder="https://github.com/username/repo.git" value={inputGitUrl} onChange={(e) => setInputGitUrl(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') handleLinkGitUrlAndProceed(); }} className="w-full border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500"/><div className="flex justify-end gap-2 mt-2"><button onClick={() => setShowGitUrlModal(false)} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded transition-colors">취소</button><button onClick={handleLinkGitUrlAndProceed} disabled={!inputGitUrl.trim() || isLoading} className="px-4 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-black rounded transition-colors flex items-center gap-1 disabled:opacity-50">연동하기</button></div></div></div>
             )}
 
             {showTokenModal && (<div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center"><div className="bg-white rounded-lg shadow-xl w-96 p-6 flex flex-col gap-4 animate-fade-in-up"><div className="flex items-center gap-2 text-lg font-bold text-gray-800"><VscKey size={20} className="text-amber-500"/> GitHub Token 인증</div><p className="text-sm text-gray-600 leading-relaxed">{modalAction === 'push' ? '원격 저장소로 푸시' : '원격 저장소에서 풀(Pull)'} 작업을 위해 PAT가 필요합니다.</p><input type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxx" value={githubToken} onChange={(e) => setGithubToken(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') executeRemoteAction(); }} className="w-full border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500 font-mono"/><div className="flex justify-end gap-2 mt-2"><button onClick={() => setShowTokenModal(false)} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded transition-colors">취소</button><button onClick={executeRemoteAction} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors flex items-center gap-1">{modalAction === 'push' ? <VscCloudUpload size={16}/> : <VscCloudDownload size={16}/>} 실행</button></div></div></div>)}
@@ -328,7 +332,6 @@ export default function GitDashboard() {
                 
                 <div className="flex-1 flex flex-col p-6 gap-6 overflow-y-auto bg-[#fafbfc]">
                     
-                    {/* 💡 [UX] 병합 중일 때 띄워주는 거대한 경고 배너! */}
                     {activeView === 'status' && isMerging && (
                         <div className="bg-red-50 border border-red-200 p-4 rounded-lg flex items-start justify-between shadow-sm">
                             <div className="flex items-start gap-3">
@@ -350,7 +353,7 @@ export default function GitDashboard() {
                     {activeView === 'history' ? (
                         <div className="border border-gray-200 rounded-lg bg-white shadow-sm overflow-hidden flex flex-col h-full bg-[#fafbfc]">
                             <div className="bg-white px-4 py-2 border-b border-gray-200 flex text-xs font-bold text-gray-600 items-center sticky top-0 z-10">
-                                <div className="w-20 shrink-0 text-center">Graph</div>
+                                <div className="w-24 shrink-0 text-center">Graph</div>
                                 <div className="flex-1">Description</div>
                                 <div className="w-24 shrink-0 text-center">Commit</div>
                                 <div className="w-28 shrink-0 text-center">Author</div>
@@ -366,8 +369,9 @@ export default function GitDashboard() {
                                             onContextMenu={(e) => handleRightClick(e, log)}
                                             className={`flex px-4 hover:bg-blue-50 transition-colors cursor-pointer items-center text-[13px] group h-6`}
                                         >
-                                            <div className="w-20 shrink-0 h-full flex items-center justify-start pl-2 font-mono text-blue-500 font-bold text-[18px] whitespace-pre select-none overflow-visible" style={{ lineHeight: '24px' }}>
-                                                {log.graph ? log.graph.replace(/\*/g, '●') : ''}
+                                            {/* 💡 [핵심 적용] 기존의 단순 replace 대신 renderGraph 함수를 통과시킵니다! */}
+                                            <div className="w-24 shrink-0 h-full flex items-center justify-start pl-2 font-mono select-none overflow-visible">
+                                                {renderGraph(log.graph)}
                                             </div>
 
                                             {isCommit && (
@@ -390,7 +394,6 @@ export default function GitDashboard() {
                         </div>
                     ) : (
                         <>
-                        {/* 💡 [UX] 충돌난 파일만 최상단에 별도로 빼서 강조해서 보여줍니다! */}
                         {conflictedFiles.length > 0 && (
                             <div className="border border-red-300 rounded bg-red-50 shadow-sm overflow-hidden flex flex-col shrink-0 mb-2 animate-pulse-border">
                                 <div className="bg-red-100 px-4 py-2 border-b border-red-200 flex justify-between items-center">

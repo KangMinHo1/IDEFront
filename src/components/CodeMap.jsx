@@ -1,76 +1,58 @@
 // src/components/CodeMap.jsx
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react'; // 💡 useRef 추가
 import { useSelector, useDispatch } from 'react-redux';
-import ReactFlow, { Background, Controls, Handle, Position } from 'reactflow';
+import ReactFlow, { Background, Controls, Handle, Position, MarkerType, applyNodeChanges } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-    VscClose, VscGoToFile, VscWarning, VscEdit, VscFolder, VscFile, 
-    VscBeaker, VscPlay, VscPass, VscError, VscRefresh 
+    VscClose, VscGoToFile, VscFile, VscRefresh, VscLink, VscSymbolClass, VscSymbolInterface, VscSymbolEnum, VscAdd, VscTrash
 } from "react-icons/vsc";
 import { closeCodeMap, setActiveActivity } from '../store/slices/uiSlice'; 
-import { setActiveFile } from '../store/slices/fileSystemSlice'; 
+
+import { openFile, mergeProjectFiles, updateFileContent, closeFilesByPath } from '../store/slices/fileSystemSlice'; 
+import { 
+    createCodeMapComponentApi, createCodeMapRelationApi, 
+    deleteCodeMapRelationApi, fetchProjectFilesApi, fetchFileContentApi, deleteFileApi 
+} from '../utils/api'; 
 
 // =========================================================
-// 💡 커스텀 노드 디자인
+// 💡 커스텀 노드 디자인 (OOP 테마 적용)
 // =========================================================
 const CustomNode = ({ data }) => {
-    const isGeneral = data.role === 'file' || data.isFolder;
-    
     let roleColor = "text-gray-500";
     let borderStyle = "border-gray-200";
     let displayRole = "FILE";
-    let subtitle = "General File";
 
-    if (data.role === 'controller') {
-        displayRole = "CONTROLLER"; roleColor = "text-blue-500";
-        borderStyle = "border-blue-400 ring-4 ring-blue-50"; subtitle = "REST Endpoints";
-    } else if (data.role === 'service') {
-        displayRole = "SERVICE"; roleColor = "text-green-500";
-        borderStyle = "border-green-400 ring-4 ring-green-50"; subtitle = "Business Logic";
-    } else if (data.role === 'db') {
-        displayRole = "REPOSITORY"; roleColor = "text-purple-500";
-        borderStyle = "border-purple-400 ring-4 ring-purple-50"; subtitle = "Data Access Layer";
-    } else if (data.role === 'entity') {
-        displayRole = "ENTITY"; roleColor = "text-orange-500";
-        borderStyle = "border-orange-300 ring-4 ring-orange-50"; subtitle = "Domain Model";
-    } else if (data.isFolder) {
-        displayRole = "DIRECTORY"; subtitle = "Folder";
-    }
+    if (data.role === 'main') { displayRole = "ENTRY POINT"; roleColor = "text-red-500"; borderStyle = "border-red-400 ring-4 ring-red-50"; } 
+    else if (data.role === 'interface') { displayRole = "INTERFACE"; roleColor = "text-purple-500"; borderStyle = "border-purple-400 ring-4 ring-purple-50"; } 
+    else if (data.role === 'abstract') { displayRole = "ABSTRACT CLASS"; roleColor = "text-orange-500"; borderStyle = "border-orange-400 ring-4 ring-orange-50 border-dashed"; } 
+    else if (data.role === 'class') { displayRole = "CONCRETE CLASS"; roleColor = "text-blue-500"; borderStyle = "border-blue-400 ring-4 ring-blue-50"; } 
+    else if (data.role === 'enum') { displayRole = "ENUM"; roleColor = "text-green-500"; borderStyle = "border-green-400 ring-4 ring-green-50"; } 
+    else if (data.role === 'exception') { displayRole = "EXCEPTION"; roleColor = "text-rose-500"; borderStyle = "border-rose-400 ring-4 ring-rose-50"; }
 
-    let statusEffect = "";
-    if (data.status === 'error') { borderStyle = "border-red-500"; statusEffect = "ring-4 ring-red-100 animate-pulse"; } 
-    else if (data.status === 'editing') { borderStyle = "border-blue-500"; statusEffect = "ring-4 ring-blue-100 animate-pulse"; }
+    const TypeIcon = data.type === 'INTERFACE' ? VscSymbolInterface : data.type === 'ENUM' ? VscSymbolEnum : VscSymbolClass;
 
+    const isGeneral = data.role === 'file';
     const cardPadding = isGeneral ? "px-4 py-3" : "px-6 py-5";
     const cardWidth = isGeneral ? "min-w-[180px]" : "min-w-[240px]";
-    const titleSize = isGeneral ? "text-[13px]" : "text-[16px]";
+    const titleSize = isGeneral ? "text-[13px]" : "text-[15px]";
 
     return (
-        <div className="flex flex-col items-center group cursor-pointer">
+        <div className="flex flex-col items-center group cursor-pointer hover:-translate-y-1 transition-transform">
             {data.showLayerLabel && (
-                <div className={`text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-widest transition-opacity opacity-100`}>
+                <div className="text-[11px] font-extrabold text-gray-500 mb-2 tracking-wide">
                     {data.layerName}
                 </div>
             )}
             
-            <div className={`relative ${cardPadding} bg-white rounded-xl border-2 ${borderStyle} ${statusEffect} shadow-[0_4px_15px_rgba(0,0,0,0.05)] hover:shadow-[0_8px_25px_rgba(0,0,0,0.1)] ${cardWidth} text-center transition-all duration-300`}>
-                <Handle type="target" position={Position.Top} className="opacity-0 w-full h-1 top-0" />
-                
-                {data.status === 'error' && <div className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-bounce"/>}
-                {data.status === 'editing' && <div className="absolute top-2 right-2 w-2 h-2 bg-blue-500 rounded-full animate-bounce"/>}
-
-                <div className={`text-[9px] font-extrabold ${roleColor} uppercase tracking-widest mb-1`}>{displayRole}</div>
-                <div className={`${titleSize} font-bold text-gray-900 mb-0.5 truncate`}>
-                    {data.label.replace('.java', '').replace('.js', '').replace('.py', '')}
+            <div className={`relative ${cardPadding} bg-white rounded-xl border-2 ${borderStyle} shadow-sm group-hover:shadow-lg ${cardWidth} text-center transition-all duration-300`}>
+                <Handle type="target" position={Position.Top} className="w-full h-4 top-[-8px] opacity-0 hover:opacity-50 bg-blue-400 z-50 transition-opacity" />
+                <div className={`text-[9px] font-extrabold ${roleColor} uppercase tracking-widest mb-1.5 flex items-center justify-center gap-1`}>
+                    <TypeIcon size={12}/> {displayRole}
                 </div>
-                
-                {!isGeneral && (
-                    <div className="text-[11px] text-gray-400 font-medium mt-1.5">
-                        {data.apiCount > 0 ? <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold">{data.apiCount} APIs</span> : subtitle}
-                    </div>
-                )}
-
-                <Handle type="source" position={Position.Bottom} className="opacity-0 w-full h-1 bottom-0" />
+                <div className={`${titleSize} font-bold text-gray-900 truncate`} title={data.label}>
+                    {data.label}
+                </div>
+                <Handle type="source" position={Position.Bottom} className="w-full h-4 bottom-[-8px] opacity-0 hover:opacity-50 bg-blue-400 z-50 transition-opacity" />
             </div>
         </div>
     );
@@ -80,399 +62,520 @@ const nodeTypes = { custom: CustomNode };
 
 export default function CodeMap() {
     const dispatch = useDispatch();
-    const { tree, fileContents } = useSelector(state => state.fileSystem);
+    const { workspaceId, activeProject, activeBranch, activeFileId } = useSelector(state => state.fileSystem);
     const { codeMapMode } = useSelector(state => state.ui);
 
     const isSplit = codeMapMode === 'split';
     
-    // 상태 관리
+    const [rfNodes, setRfNodes] = useState([]);
+    const [rfEdges, setRfEdges] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
     const [selectedNode, setSelectedNode] = useState(null); 
-    const [selectedApi, setSelectedApi] = useState(null);
-    const [reqBody, setReqBody] = useState('');
-    const [resData, setResData] = useState(null);
-    const [resStatus, setResStatus] = useState(null);
-    const [isTesting, setIsTesting] = useState(false);
 
-    // API 자동 스캔
-    const apiEndpoints = useMemo(() => {
-        const endpoints = [];
-        Object.entries(fileContents || {}).forEach(([path, content]) => {
-            const regex = /@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*["']([^"']+)["']\s*\)/gi;
-            let match;
-            while ((match = regex.exec(content)) !== null) {
-                endpoints.push({ method: match[1].toUpperCase(), path: match[2], fullPath: path });
-            }
-        });
-        return endpoints;
-    }, [fileContents]);
+    const [aiSummary, setAiSummary] = useState('');
+    const [isSummaryLoading, setIsSummaryLoading] = useState(false);
 
-    // 레이아웃 알고리즘
-    const { nodes, edges, stats, flatFiles } = useMemo(() => {
-        const generatedNodes = [];
-        const generatedEdges = [];
-        
-        const extractFiles = (nodesArr) => {
-            let result = [];
-            nodesArr.forEach(n => {
-                const type = String(n.type || '').toLowerCase();
-                if (type === 'file') result.push(n);
-                else if (n.children) result = result.concat(extractFiles(n.children));
-            });
-            return result;
-        };
+    // 💡 중복 요청 방지를 위한 Ref
+    const lastRequestKeyRef = useRef("");
 
-        const allFiles = tree ? extractFiles(Array.isArray(tree) ? tree : [tree]) : [];
+    // 💡 우클릭 메뉴 관리 State
+    const [contextMenuPos, setContextMenuPos] = useState(null);
+    const [nodeContextMenu, setNodeContextMenu] = useState(null);
+    const [edgeContextMenu, setEdgeContextMenu] = useState(null);
 
-        const getRole = (node) => {
-            const content = fileContents[node.id];
-            if (content) {
-                if (/@(Rest)?Controller/i.test(content)) return 'controller';
-                if (/@Service/i.test(content)) return 'service';
-                if (/@(Repository|Mapper|Dao)/i.test(content)) return 'db';
-                if (/@(Entity|Table|Document)/i.test(content)) return 'entity';
-            }
-            const lower = node.name.toLowerCase();
-            if (lower.includes('controller')) return 'controller';
-            if (lower.includes('service')) return 'service';
-            if (lower.includes('repository') || lower.includes('mapper')) return 'db';
-            if (lower.includes('entity') || lower.includes('dto')) return 'entity';
-            return 'file'; 
-        };
+    // 모달 관리 State
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [newCompName, setNewCompName] = useState('');
+    const [newCompType, setNewCompType] = useState('CLASS');
+    const [pendingRelation, setPendingRelation] = useState(null);
+    const [relationType, setRelationType] = useState('COMPOSITION');
 
-        const grouped = { controller: [], service: [], db: [], entity: [], file: [] };
+    const onNodesChange = useCallback((changes) => setRfNodes((nds) => applyNodeChanges(changes, nds)), []);
 
-        allFiles.forEach(file => {
-            const role = getRole(file);
-            if (grouped[role]) grouped[role].push(file);
-        });
-
-        const calcStats = {
-            controller: grouped.controller.length, service: grouped.service.length,
-            db: grouped.db.length, entity: grouped.entity.length, total: allFiles.length
-        };
-
-        let currentY = 50;
-        const layerGapY = 160; 
-        const nodeWidth = 260;
-        const nodeGapX = 40; 
-
-        const layoutArchitectureLayer = (filesInLayer, layerName, role) => {
-            if (filesInLayer.length === 0) return []; 
-            const totalWidth = filesInLayer.length * nodeWidth + (filesInLayer.length - 1) * nodeGapX;
-            let startX = -(totalWidth / 2) + (nodeWidth / 2);
-            const layerNodeIds = [];
-
-            filesInLayer.forEach((file, idx) => {
-                const fileApis = apiEndpoints.filter(api => api.fullPath === file.id).length;
-                generatedNodes.push({
-                    id: file.id, type: 'custom', position: { x: startX + idx * (nodeWidth + nodeGapX), y: currentY },
-                    data: { label: file.name, role: role, layerName: `${layerName} LAYER`, showLayerLabel: idx === 0, fullPath: file.id, status: 'normal', apiCount: fileApis }
-                });
-                layerNodeIds.push(file.id);
-            });
-            currentY += layerGapY; 
-            return layerNodeIds;
-        };
-
-        const layoutGeneralGrid = (filesInLayer) => {
-            if (filesInLayer.length === 0) return;
-            currentY += 20; 
-            const cols = 4; 
-            const smallNodeWidth = 180;
-            const smallNodeGapX = 20;
-            const smallNodeGapY = 80;
-
-            const rows = Math.ceil(filesInLayer.length / cols);
-            filesInLayer.forEach((file, idx) => {
-                const row = Math.floor(idx / cols);
-                const col = idx % cols;
-                const itemsInThisRow = row === rows - 1 ? (filesInLayer.length % cols || cols) : cols;
-                const totalWidth = itemsInThisRow * smallNodeWidth + (itemsInThisRow - 1) * smallNodeGapX;
-                const startX = -(totalWidth / 2) + (smallNodeWidth / 2);
-
-                generatedNodes.push({
-                    id: file.id, type: 'custom', position: { x: startX + col * (smallNodeWidth + smallNodeGapX), y: currentY + (row * smallNodeGapY) },
-                    data: { label: file.name, role: 'file', layerName: `GENERAL FILES`, showLayerLabel: idx === 0, fullPath: file.id, status: 'normal' }
-                });
-            });
-        };
-
-        const cIds = layoutArchitectureLayer(grouped.controller, 'CONTROLLER', 'controller');
-        const sIds = layoutArchitectureLayer(grouped.service, 'SERVICE', 'service');
-        const dbIds = layoutArchitectureLayer(grouped.db, 'DATA', 'db');
-        const eIds = layoutArchitectureLayer(grouped.entity, 'DOMAIN', 'entity');
-        
-        const activeLayers = [cIds, sIds, dbIds].filter(layer => layer.length > 0);
-        for (let i = 0; i < activeLayers.length - 1; i++) {
-            const sourceIds = activeLayers[i];
-            const targetIds = activeLayers[i + 1];
-            sourceIds.forEach((sId, idx) => {
-                const tId = targetIds[idx % targetIds.length];
-                generatedEdges.push({
-                    id: `e-${sId}-${tId}`, source: sId, target: tId, type: 'step', 
-                    style: { stroke: '#cbd5e1', strokeWidth: 2 },
-                });
-            });
-        }
-        layoutGeneralGrid(grouped.file);
-
-        return { nodes: generatedNodes, edges: generatedEdges, stats: calcStats, flatFiles: allFiles };
-    }, [tree, fileContents, apiEndpoints]);
-
-    const handleNodeClick = useCallback((event, node) => {
-        setSelectedNode(node.data);
-        setSelectedApi(null); 
-        setResData(null);
+    const onConnect = useCallback((connection) => {
+        if (connection.source === connection.target) return;
+        setPendingRelation({ source: connection.source, target: connection.target });
     }, []);
 
-    const openFileInEditor = () => {
-        if (selectedNode && selectedNode.fullPath) {
-            dispatch(setActiveFile(selectedNode.fullPath));
-            dispatch(setActiveActivity('editor'));
-            if (!isSplit) dispatch(closeCodeMap());
-        }
-    };
+    const onPaneContextMenu = useCallback((event) => {
+        event.preventDefault();
+        setNodeContextMenu(null); setEdgeContextMenu(null);
+        setContextMenuPos({ x: event.clientX, y: event.clientY });
+    }, []);
 
-    const handleTestApi = async () => {
-        if (!selectedApi) return;
-        setIsTesting(true);
-        setResData(null);
-        setResStatus(null);
+    const onNodeContextMenu = useCallback((event, node) => {
+        event.preventDefault();
+        setContextMenuPos(null); setEdgeContextMenu(null);
+        setNodeContextMenu({ x: event.clientX, y: event.clientY, node });
+    }, []);
+
+    const onEdgeContextMenu = useCallback((event, edge) => {
+        event.preventDefault();
+        setContextMenuPos(null); setNodeContextMenu(null);
+        setEdgeContextMenu({ x: event.clientX, y: event.clientY, edge });
+    }, []);
+
+    useEffect(() => {
+        const handleClick = () => { setContextMenuPos(null); setNodeContextMenu(null); setEdgeContextMenu(null); };
+        window.addEventListener('click', handleClick);
+        return () => window.removeEventListener('click', handleClick);
+    }, []);
+
+    const fetchAndLayoutCodeMap = useCallback(async (isRefresh = false) => {
+        if (!workspaceId || !activeProject) return;
+
+        // 💡 [중복 요청 방지 로직]
+        const branch = activeBranch || 'master';
+        const currentRequestKey = `${workspaceId}-${activeProject}-${branch}`;
         
+        // 새로고침 버튼을 누른 게 아니고, 이전 요청과 동일한 키라면 중복 호출로 간주하고 차단
+        if (!isRefresh && lastRequestKeyRef.current === currentRequestKey) {
+            return;
+        }
+        
+        lastRequestKeyRef.current = currentRequestKey;
+        setIsLoading(true); setSelectedNode(null);
+
         try {
-            const options = {
-                method: selectedApi.method,
-                headers: { 'Content-Type': 'application/json' },
+            const response = await fetch(`http://localhost:8080/api/codemap/analyze?workspaceId=${workspaceId}&projectName=${activeProject}&branchName=${branch}&language=JAVA`);
+            if (!response.ok) throw new Error("분석 데이터를 가져오지 못했습니다.");
+            
+            const data = await response.json();
+            const { nodes: backendNodes, edges: backendEdges } = data;
+
+            const grouped = { main: [], abstractions: [], concrete: [], others: [], file: [] };
+            
+            backendNodes.forEach(node => {
+                if (node.role === 'main') grouped.main.push(node);
+                else if (node.role === 'interface' || node.role === 'abstract') grouped.abstractions.push(node);
+                else if (node.role === 'class') grouped.concrete.push(node);
+                else if (node.role === 'enum' || node.role === 'exception') grouped.others.push(node);
+                else grouped.file.push(node);
+            });
+
+            const generatedNodes = [];
+            let currentY = 50; const layerGapY = 160; const nodeWidth = 260; const nodeGapX = 40; 
+
+            const layoutLayer = (nodesInLayer, layerName) => {
+                if (nodesInLayer.length === 0) return;
+                const totalWidth = nodesInLayer.length * nodeWidth + (nodesInLayer.length - 1) * nodeGapX;
+                let startX = -(totalWidth / 2) + (nodeWidth / 2);
+
+                nodesInLayer.forEach((n, idx) => {
+                    generatedNodes.push({
+                        id: n.id, type: 'custom', 
+                        position: { x: startX + idx * (nodeWidth + nodeGapX), y: currentY },
+                        data: { ...n, layerName: layerName, showLayerLabel: idx === 0 }
+                    });
+                });
+                currentY += layerGapY; 
             };
-            if (['POST', 'PUT', 'PATCH'].includes(selectedApi.method) && reqBody) {
-                options.body = reqBody;
+
+            const layoutGrid = (nodesInLayer, gridLabel) => {
+                if (nodesInLayer.length === 0) return;
+                currentY += 20; const cols = 4; const smallWidth = 180, smallGapX = 20, smallGapY = 80;
+
+                nodesInLayer.forEach((n, idx) => {
+                    const row = Math.floor(idx / cols);
+                    const col = idx % cols;
+                    const itemsInRow = row === Math.ceil(nodesInLayer.length / cols) - 1 ? (nodesInLayer.length % cols || cols) : cols;
+                    const startX = -((itemsInRow * smallWidth + (itemsInRow - 1) * smallGapX) / 2) + (smallWidth / 2);
+
+                    generatedNodes.push({
+                        id: n.id, type: 'custom', 
+                        position: { x: startX + col * (smallWidth + smallGapX), y: currentY + (row * smallGapY) },
+                        data: { ...n, layerName: gridLabel, showLayerLabel: idx === 0 }
+                    });
+                });
+                currentY += (Math.ceil(nodesInLayer.length / cols) * smallGapY) + 50;
+            };
+
+            layoutLayer(grouped.main, '🚀 실행 진입점 (Entry Point)');
+            layoutLayer(grouped.abstractions, '💡 추상화 계층 (Interfaces & Abstract Classes)');
+            layoutLayer(grouped.concrete, '🧱 구현체 (Concrete Classes)');
+            
+            const remainingOthers = [...grouped.others, ...grouped.file];
+            layoutGrid(remainingOthers, '📦 열거형, 예외 및 일반 객체');
+
+            const generatedEdges = backendEdges.map(e => {
+                let strokeColor = '#94a3b8'; let strokeDasharray = '5 5'; let animated = false;
+
+                // 💡 백엔드 DTO 필드명인 relationType을 사용하여 스타일 결정
+                const rType = e.relationType;
+
+                if (rType === 'IMPLEMENTS') { 
+                    strokeColor = '#10b981'; strokeDasharray = '5 5'; animated = true; 
+                } 
+                else if (rType === 'EXTENDS') { 
+                    strokeColor = '#3b82f6'; strokeDasharray = 'none'; animated = true; 
+                } 
+                else if (rType === 'COMPOSITION') {
+                    strokeColor = '#6366f1'; strokeDasharray = 'none'; animated = true;
+                }
+                // IMPORT는 기본 회색 점선 유지
+
+                return {
+                    id: e.id, source: e.source, target: e.target,
+                    type: 'smoothstep', animated: animated,     
+                    style: { stroke: strokeColor, strokeWidth: 2, strokeDasharray: strokeDasharray },
+                    markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
+                    data: { relationType: rType }
+                };
+            });
+
+            setRfNodes(generatedNodes); setRfEdges(generatedEdges);
+        } catch (error) { console.error(error); } finally { setIsLoading(false); }
+    }, [workspaceId, activeProject, activeBranch]);
+
+    useEffect(() => { fetchAndLayoutCodeMap(); }, [fetchAndLayoutCodeMap]);
+
+    useEffect(() => {
+        if (selectedNode && selectedNode.id) {
+            setAiSummary(''); setIsSummaryLoading(true); 
+            const branch = activeBranch || 'master';
+            fetch(`http://localhost:8080/api/codemap/summary?workspaceId=${workspaceId}&projectName=${activeProject}&branchName=${branch}&filePath=${encodeURIComponent(selectedNode.id)}`)
+                .then(res => res.text()).then(text => setAiSummary(text))
+                .catch(() => setAiSummary('AI 요약 오류')).finally(() => setIsSummaryLoading(false));
+        }
+    }, [selectedNode, workspaceId, activeProject, activeBranch]);
+
+    const handleNodeClick = useCallback((event, node) => { setSelectedNode(node.data); }, []);
+
+    const openFileInEditor = async () => {
+        if (selectedNode && selectedNode.id) {
+            try {
+                let filePath = selectedNode.id;
+                if (!filePath.endsWith('.java')) filePath += '.java';
+
+                dispatch(openFile({ id: filePath, name: filePath.split('/').pop(), type: 'file' }));
+                const content = await fetchFileContentApi(workspaceId, activeProject, activeBranch || 'master', filePath);
+                dispatch(updateFileContent({ filePath: filePath, content: content }));
+                
+                dispatch(setActiveActivity('editor'));
+                if (!isSplit) dispatch(closeCodeMap());
+            } catch (error) {
+                alert("파일 내용을 불러오는데 실패했습니다: " + error.message);
             }
-            
-            const response = await fetch(`http://localhost:8080${selectedApi.path}`, options);
-            const textData = await response.text(); 
-            
-            try { setResData(JSON.parse(textData)); } 
-            catch { setResData(textData); }
-            
-            setResStatus(response.status);
-        } catch (err) {
-            setResData("네트워크 오류: 서버가 실행 중인지 확인하세요.\n" + err.message);
-            setResStatus(500);
+        }
+    };
+
+    const handleCreateComponentSubmit = async () => {
+        if (!newCompName.trim()) return alert("컴포넌트(클래스) 이름을 입력해주세요!");
+        try {
+            setIsLoading(true);
+            await createCodeMapComponentApi(workspaceId, activeProject, activeBranch || 'master', newCompName, newCompType);
+            setIsModalOpen(false); setNewCompName('');
+            alert("✨ 컴포넌트가 성공적으로 생성되었습니다!");
+            await fetchAndLayoutCodeMap(true); // 강제 갱신
+            const files = await fetchProjectFilesApi(workspaceId, activeProject, activeBranch || 'master');
+            dispatch(mergeProjectFiles({ projectName: activeProject, files }));
+        } catch (e) {
+            alert("생성 실패: " + e.message);
         } finally {
-            setIsTesting(false);
+            setIsLoading(false);
         }
     };
 
-    const getMethodStyle = (method) => {
-        switch(method) {
-            case 'GET': return 'border-green-300 text-green-600 bg-white hover:bg-green-50';
-            case 'POST': return 'border-blue-300 text-blue-600 bg-white hover:bg-blue-50';
-            case 'PUT': return 'border-yellow-400 text-yellow-600 bg-white hover:bg-yellow-50';
-            case 'DELETE': return 'border-red-300 text-red-600 bg-white hover:bg-red-50';
-            default: return 'border-gray-300 text-gray-600 bg-white hover:bg-gray-50';
+    const handleRelationSubmit = async () => {
+        if (!pendingRelation) return;
+        try {
+            setIsLoading(true);
+            await createCodeMapRelationApi(workspaceId, activeProject, activeBranch || 'master', pendingRelation.source, pendingRelation.target, relationType);
+            alert(`🔗 코드가 성공적으로 삽입되었습니다!`);
+            setPendingRelation(null);
+            
+            await fetchAndLayoutCodeMap(true); // 강제 갱신
+
+            let sourcePath = pendingRelation.source;
+            if(!sourcePath.endsWith(".java")) sourcePath += ".java";
+
+            if (activeFileId === sourcePath || isSplit) {
+                const newContent = await fetchFileContentApi(workspaceId, activeProject, activeBranch || 'master', sourcePath);
+                dispatch(updateFileContent({ filePath: sourcePath, content: newContent }));
+            }
+        } catch (e) {
+            alert("관계 연결 실패: " + e.message);
+            setPendingRelation(null);
+        } finally {
+            setIsLoading(false);
         }
     };
 
-    // 💡 [수정] 반응형을 위한 동적 클래스 세팅
-    const panelSizeClass = isSplit 
-        ? "absolute right-4 top-4 w-[280px] max-h-[calc(100%-2rem)]" // 분할화면: 작게, 여백 줄임
-        : "absolute right-10 top-10 w-[360px] max-h-[calc(100%-5rem)]"; // 전체화면: 크고 넓게
+    const handleDeleteNode = async () => {
+        if (!nodeContextMenu) return;
+        const nodeData = nodeContextMenu.node.data;
+        if (!window.confirm(`정말 '${nodeData.label}' 컴포넌트를 완전히 삭제하시겠습니까?\n실제 파일도 영구 삭제됩니다.`)) return;
 
-    const paddingClass = isSplit ? "p-5" : "p-7";
-    const titleSizeClass = isSplit ? "text-base" : "text-lg";
+        try {
+            setIsLoading(true);
+            let filePath = nodeData.id;
+            if (!filePath.endsWith('.java')) filePath += '.java';
+
+            await deleteFileApi(workspaceId, activeProject, activeBranch || 'master', filePath);
+            
+            dispatch(closeFilesByPath(filePath));
+            const files = await fetchProjectFilesApi(workspaceId, activeProject, activeBranch || 'master');
+            dispatch(mergeProjectFiles({ projectName: activeProject, files }));
+
+            alert("🗑️ 컴포넌트가 삭제되었습니다.");
+            setNodeContextMenu(null);
+            if(selectedNode && selectedNode.id === nodeData.id) setSelectedNode(null);
+            await fetchAndLayoutCodeMap(true); // 강제 갱신
+            
+        } catch (e) { alert("삭제 실패: " + e.message); } finally { setIsLoading(false); }
+    };
+
+    const handleDeleteEdge = async () => {
+        if (!edgeContextMenu) return;
+        const { source, target, data } = edgeContextMenu.edge;
+        const rType = data?.relationType || 'COMPOSITION';
+        
+        if (!window.confirm(`정말 이 의존성(${rType}) 코드를 삭제하시겠습니까?\n소스 코드 내부에서 해당 관계가 지워집니다.`)) return;
+
+        try {
+            setIsLoading(true);
+            await deleteCodeMapRelationApi(workspaceId, activeProject, activeBranch || 'master', source, target, rType);
+            
+            alert("🔗 관계(코드)가 성공적으로 삭제되었습니다.");
+            setEdgeContextMenu(null);
+            await fetchAndLayoutCodeMap(true); // 강제 갱신
+
+            let sourcePath = source;
+            if(!sourcePath.endsWith(".java")) sourcePath += ".java";
+            if (activeFileId === sourcePath || isSplit) {
+                const newContent = await fetchFileContentApi(workspaceId, activeProject, activeBranch || 'master', sourcePath);
+                dispatch(updateFileContent({ filePath: sourcePath, content: newContent }));
+            }
+        } catch (e) { alert("관계 삭제 실패: " + e.message); } finally { setIsLoading(false); }
+    };
+
+    const dependencies = useMemo(() => {
+        if (!selectedNode) return { imports: [], importedBy: [] };
+        const imports = rfEdges.filter(e => e.source === selectedNode.id).map(e => rfNodes.find(n => n.id === e.target)?.data).filter(Boolean);
+        const importedBy = rfEdges.filter(e => e.target === selectedNode.id).map(e => rfNodes.find(n => n.id === e.source)?.data).filter(Boolean);
+        return { imports, importedBy };
+    }, [selectedNode, rfEdges, rfNodes]);
+
+    const panelSizeClass = isSplit ? "absolute right-4 top-4 w-[280px] max-h-[calc(100%-2rem)]" : "absolute right-10 top-10 w-[340px] max-h-[calc(100%-5rem)]";
 
     return (
-        <div className="w-full h-full flex bg-[#fafafa] animate-fade-in relative overflow-hidden font-sans">
-            {/* 왼쪽 사이드바: 전체화면일 때만 렌더링 */}
-            {!isSplit && (
-                <div className="w-64 bg-[#fafafa] border-r border-gray-200 flex flex-col shrink-0 z-10">
-                    <div className="p-6 pb-2">
-                        <h3 className="text-[11px] font-extrabold text-gray-400 tracking-widest mb-4">PROJECT STRUCTURE</h3>
-                        <div className="space-y-2 max-h-[40vh] overflow-y-auto custom-scrollbar">
-                            {flatFiles.map(f => {
-                                const content = fileContents[f.id] || '';
-                                let isC = /@(Rest)?Controller/i.test(content) || f.name.includes('Controller');
-                                let isS = /@Service/i.test(content) || f.name.includes('Service');
-                                let isR = /@(Repository|Mapper)/i.test(content) || f.name.includes('Repository');
-                                let isE = /@Entity/i.test(content) || f.name.includes('Entity');
-
-                                return (
-                                    <div key={f.id} className="flex items-center gap-2 text-[13px] text-gray-700 hover:text-blue-600 cursor-pointer transition-colors truncate">
-                                        {isC ? <VscFile className="text-blue-500" /> :
-                                         isS ? <VscFile className="text-green-500" /> :
-                                         isR ? <VscFile className="text-purple-500" /> :
-                                         isE ? <VscFile className="text-orange-500" /> :
-                                         <VscFile className="text-gray-400" />}
-                                        <span className="truncate">{f.name}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    
-                    <div className="p-6 border-t border-gray-200 mt-4">
-                        <h3 className="text-[11px] font-extrabold text-gray-400 tracking-widest mb-4">아키텍처 통계</h3>
-                        <div className="space-y-3 text-[13px] text-gray-600 font-medium">
-                            <div className="flex justify-between items-center"><span>컨트롤러</span> <span className="font-bold text-gray-900">{stats.controller}개</span></div>
-                            <div className="flex justify-between items-center"><span>서비스</span> <span className="font-bold text-gray-900">{stats.service}개</span></div>
-                            <div className="flex justify-between items-center"><span>레포지토리</span> <span className="font-bold text-gray-900">{stats.db}개</span></div>
-                            <div className="flex justify-between items-center"><span>엔티티</span> <span className="font-bold text-gray-900">{stats.entity}개</span></div>
-                        </div>
-                    </div>
+        <div className="flex-1 flex flex-col relative w-full h-full min-h-0 bg-[#fafafa]">
+            <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0 z-50">
+                <div className="flex items-center gap-4">
+                    <h2 className="text-[15px] font-extrabold text-gray-900">Architecture Map (OOP)</h2>
+                    {isLoading ? (
+                        <div className="flex items-center gap-1.5 text-blue-600 text-xs font-bold bg-blue-50 px-2 py-1 rounded"><VscRefresh className="animate-spin" size={14}/> 맵 동기화 중...</div>
+                    ) : (
+                        <div className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded flex items-center gap-1"><VscFile /> 총 {rfNodes.length}개 컴포넌트 감지됨</div>
+                    )}
                 </div>
-            )}
-
-            <div className="flex-1 flex flex-col relative w-full h-full">
-                {/* 헤더 */}
-                <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0 z-50">
-                    <div className="flex items-center gap-3">
-                        <h2 className="text-[15px] font-extrabold text-gray-900">코드 맵</h2>
-                        {!isSplit && <p className="text-[12px] text-gray-500 mt-0.5">프로젝트의 구조와 컴포넌트 관계를 시각화합니다</p>}
-                    </div>
-                    <button 
-                        onClick={() => dispatch(closeCodeMap())}
-                        className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 transition-colors text-xs font-bold shadow-sm"
-                    >
-                        닫기
+                <div className="flex items-center gap-2">
+                    <button onClick={() => setIsModalOpen(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold shadow-sm flex items-center gap-1 transition-colors">
+                        <VscAdd size={14}/> 새 컴포넌트
+                    </button>
+                    <button onClick={() => fetchAndLayoutCodeMap(true)} className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 rounded text-gray-700 transition-colors text-xs font-bold shadow-sm flex items-center gap-1">
+                        <VscRefresh size={14}/> 새로고침
                     </button>
                 </div>
+            </div>
 
-                {/* 맵 컨테이너 */}
-                <div className="flex-1 relative w-full h-full">
+            <div className="flex-1 relative w-full min-h-0">
+                <div className="absolute inset-0">
                     <ReactFlow 
-                        nodes={nodes} edges={edges} nodeTypes={nodeTypes}
-                        onNodeClick={handleNodeClick} 
-                        onPaneClick={() => {setSelectedNode(null); setSelectedApi(null);}} 
-                        fitView fitViewOptions={{ padding: isSplit ? 0.2 : 0.15 }} // 분할화면 시 여백을 살짝 늘려 안정감 부여
-                        attributionPosition="bottom-right" minZoom={0.1}
+                        nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes}
+                        onNodesChange={onNodesChange} 
+                        onConnect={onConnect} 
+                        onNodeClick={handleNodeClick} onPaneClick={() => setSelectedNode(null)} 
+                        onPaneContextMenu={onPaneContextMenu}
+                        onNodeContextMenu={onNodeContextMenu}
+                        onEdgeContextMenu={onEdgeContextMenu}
+                        fitView fitViewOptions={{ padding: isSplit ? 0.2 : 0.15 }} attributionPosition="bottom-right" minZoom={0.1}
                     >
-                        <Background color="transparent" /> 
-                        <Controls className="shadow-md border border-gray-200 rounded-lg bg-white"/>
+                        <Background color="#e2e8f0" gap={16} /> <Controls className="shadow-md border border-gray-200 rounded-lg bg-white"/>
                     </ReactFlow>
+                </div>
 
-                    {/* ========================================================= */}
-                    {/* 💡 [수정] 반응형 & 스크롤 완벽 적용된 우측 상세/테스터 패널 */}
-                    {/* ========================================================= */}
-                    {selectedNode && (
-                        <div className={`${panelSizeClass} bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)] rounded-2xl z-[100] flex flex-col overflow-hidden animate-fade-in border border-gray-100`}>
-                            
-                            {/* 패널 내부 스크롤 (이 부분이 길어지면 안에서만 스크롤됨) */}
-                            <div className={`${paddingClass} overflow-y-auto custom-scrollbar flex-1`}>
-                                <div className="flex justify-between items-start mb-5">
-                                    <h3 className={`font-extrabold text-gray-900 ${titleSizeClass}`}>상세 정보</h3>
+                {/* 우클릭 메뉴들... (생략 없음) */}
+                {contextMenuPos && (
+                    <div className="fixed bg-white border border-gray-200 shadow-xl rounded-lg py-1.5 w-48 z-[9999]" style={{ top: contextMenuPos.y, left: contextMenuPos.x }}>
+                        <div className="px-4 py-2 hover:bg-blue-50 hover:text-blue-700 cursor-pointer text-[13px] font-bold text-gray-700 flex items-center gap-2 transition-colors" onClick={() => { setContextMenuPos(null); setIsModalOpen(true); }}>
+                            <VscAdd size={16} className="text-blue-500" /> 새 컴포넌트 생성...
+                        </div>
+                    </div>
+                )}
+
+                {nodeContextMenu && (
+                    <div className="fixed bg-white border border-gray-200 shadow-xl rounded-lg py-1.5 w-48 z-[9999]" style={{ top: nodeContextMenu.y, left: nodeContextMenu.x }}>
+                        <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="text-xs font-bold text-gray-600 truncate block">{nodeContextMenu.node.data.label}</span></div>
+                        <div className="px-4 py-2 hover:bg-red-50 hover:text-red-700 cursor-pointer text-[13px] font-bold text-red-600 flex items-center gap-2 transition-colors" onClick={handleDeleteNode}>
+                            <VscTrash size={16} /> 컴포넌트 삭제
+                        </div>
+                    </div>
+                )}
+
+                {edgeContextMenu && (
+                    <div className="fixed bg-white border border-gray-200 shadow-xl rounded-lg py-1.5 w-48 z-[9999]" style={{ top: edgeContextMenu.y, left: edgeContextMenu.x }}>
+                        <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="text-[11px] font-bold text-gray-500 block">의존성 관계 ({edgeContextMenu.edge.data?.relationType || 'IMPORT'})</span></div>
+                        <div className="px-4 py-2 hover:bg-red-50 hover:text-red-700 cursor-pointer text-[13px] font-bold text-red-600 flex items-center gap-2 transition-colors" onClick={handleDeleteEdge}>
+                            <VscLink size={16} className="rotate-45" /> 관계(코드) 끊기
+                        </div>
+                    </div>
+                )}
+
+                {/* 모달들... (생략 없음) */}
+                {isModalOpen && (
+                    <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-[400px] flex flex-col overflow-hidden animate-fade-in-up">
+                            <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                                <h3 className="font-extrabold text-gray-800 flex items-center gap-2"><VscSymbolClass className="text-blue-600" size={18} /> 새 자바 컴포넌트 생성</h3>
+                                <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-red-500 transition-colors"><VscClose size={20}/></button>
+                            </div>
+                            <div className="p-6 flex flex-col gap-5">
+                                <div>
+                                    <label className="block text-[12px] font-bold text-gray-600 mb-1.5">컴포넌트 (클래스) 이름</label>
+                                    <input 
+                                        type="text" placeholder="예: PaymentProcessor" value={newCompName}
+                                        onChange={(e) => setNewCompName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+                                        className="w-full border border-gray-300 rounded-lg p-2.5 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-shadow"
+                                    />
                                 </div>
-                                
-                                <div className="space-y-5">
-                                    <div className="flex justify-between border-b border-gray-100 pb-3">
-                                        <div>
-                                            <div className="text-[10px] text-gray-500 mb-1">타입</div>
-                                            <div className={`font-bold text-gray-800 ${isSplit ? 'text-[11px]' : 'text-[13px]'}`}>
-                                                {selectedNode.role === 'controller' ? 'REST Controller' : 
-                                                 selectedNode.role === 'service' ? 'Business Service' : 
-                                                 selectedNode.role === 'db' ? 'Repository' : 
-                                                 selectedNode.role === 'entity' ? 'Domain Entity' : 'General File'}
-                                            </div>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="text-[10px] text-gray-500 mb-1">파일명</div>
-                                            <div className={`font-bold text-gray-800 truncate ${isSplit ? 'max-w-[100px] text-[11px]' : 'max-w-[120px] text-[13px]'}`} title={selectedNode.label}>
-                                                {selectedNode.label}
-                                            </div>
-                                        </div>
+                                <div>
+                                    <label className="block text-[12px] font-bold text-gray-600 mb-1.5">객체 지향 타입 (Type)</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {['CLASS', 'INTERFACE', 'ABSTRACT', 'EXCEPTION'].map(t => (
+                                            <label key={t} className={`border rounded-lg p-2 flex items-center gap-2 cursor-pointer transition-colors ${newCompType === t ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                                <input type="radio" name="compType" value={t} checked={newCompType === t} onChange={() => setNewCompType(t)} className="hidden" />
+                                                <span className="text-xs font-bold">{t}</span>
+                                            </label>
+                                        ))}
                                     </div>
-
-                                    {/* API 뱃지 리스트 */}
-                                    {selectedNode.role === 'controller' && (
-                                        <div>
-                                            <div className="text-[11px] font-medium text-gray-500 mb-2 flex items-center gap-1">
-                                                엔드포인트 <span className="text-blue-500 text-[9px] font-bold">(클릭하여 테스트)</span>
-                                            </div>
-                                            <div className="flex flex-wrap gap-1.5">
-                                                {apiEndpoints.filter(api => api.fullPath === selectedNode.fullPath).length > 0 ? (
-                                                    apiEndpoints.filter(api => api.fullPath === selectedNode.fullPath).map((api, idx) => (
-                                                        <div 
-                                                            key={idx} 
-                                                            onClick={() => { setSelectedApi(api); setResData(null); }}
-                                                            className={`px-2.5 py-1 text-[10px] font-bold border rounded-full font-mono cursor-pointer transition-transform hover:scale-105 active:scale-95 ${getMethodStyle(api.method)} ${selectedApi?.path === api.path ? 'ring-2 ring-offset-2 ring-blue-400' : 'shadow-sm'}`}
-                                                        >
-                                                            {api.method} {api.path}
-                                                        </div>
-                                                    ))
-                                                ) : (
-                                                    <div className="text-[11px] text-gray-400">발견된 엔드포인트가 없습니다.</div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Quick API Tester UI */}
-                                    {selectedApi && (
-                                        <div className="mt-3 pt-4 border-t border-gray-100 animate-fade-in">
-                                            <div className="flex items-center gap-1.5 mb-2.5">
-                                                <VscBeaker className="text-blue-600" size={14} />
-                                                <span className="text-[12px] font-bold text-gray-900">Quick Tester</span>
-                                            </div>
-
-                                            <div className="bg-[#f8f9fa] border border-gray-200 rounded-lg p-2.5 space-y-2.5">
-                                                <div className="flex items-center gap-2 bg-white border border-gray-200 px-2 py-1.5 rounded">
-                                                    <span className={`text-[9px] font-black ${getMethodStyle(selectedApi.method).split(' ')[1]}`}>{selectedApi.method}</span>
-                                                    <span className="text-[10px] font-mono text-gray-700 truncate">http://localhost:8080{selectedApi.path}</span>
-                                                </div>
-
-                                                {['POST', 'PUT', 'PATCH'].includes(selectedApi.method) && (
-                                                    <div>
-                                                        <div className="text-[9px] text-gray-500 font-bold mb-1">Request Body (JSON)</div>
-                                                        <textarea 
-                                                            className="w-full text-[10px] font-mono p-2 border border-gray-200 rounded bg-white outline-none focus:border-blue-400 h-14 resize-none shadow-inner"
-                                                            placeholder='{"key": "value"}'
-                                                            value={reqBody}
-                                                            onChange={e => setReqBody(e.target.value)}
-                                                        />
-                                                    </div>
-                                                )}
-
-                                                <button 
-                                                    onClick={handleTestApi}
-                                                    disabled={isTesting}
-                                                    className="w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded flex items-center justify-center gap-1.5 transition-colors disabled:bg-blue-300 shadow-sm"
-                                                >
-                                                    {isTesting ? <VscRefresh className="animate-spin" size={12}/> : <VscPlay size={12}/>}
-                                                    {isTesting ? 'Sending Request...' : 'Send Request'}
-                                                </button>
-
-                                                {/* 서버 응답 결과 패널 */}
-                                                {resStatus && (
-                                                    <div className="mt-2 pt-2 border-t border-gray-200 animate-fade-in">
-                                                        <div className="flex justify-between items-center mb-1">
-                                                            <span className="text-[10px] text-gray-500 font-bold">Response</span>
-                                                            <span className={`text-[10px] font-bold flex items-center gap-1 ${resStatus >= 200 && resStatus < 300 ? 'text-green-600' : 'text-red-600'}`}>
-                                                                {resStatus >= 200 && resStatus < 300 ? <VscPass/> : <VscError/>} 
-                                                                Status: {resStatus}
-                                                            </span>
-                                                        </div>
-                                                        <div className="bg-[#1e1e1e] text-green-400 text-[10px] font-mono p-2.5 rounded-md h-28 overflow-y-auto whitespace-pre-wrap break-all custom-scrollbar shadow-inner">
-                                                            {typeof resData === 'object' ? JSON.stringify(resData, null, 2) : resData}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
-                            
-                            {/* 하단 고정 버튼 구역 */}
-                            <div className="p-3 bg-gray-50 border-t border-gray-100 shrink-0">
-                                <button 
-                                    onClick={openFileInEditor}
-                                    className="w-full py-2 bg-gray-900 hover:bg-black text-white rounded-lg text-[12px] font-bold transition-colors flex items-center justify-center gap-1.5 shadow-md"
-                                >
-                                    에디터에서 파일 열기 <VscGoToFile size={14} />
+                            <div className="bg-gray-50 p-4 border-t border-gray-100 flex justify-end gap-2">
+                                <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-lg">취소</button>
+                                <button onClick={handleCreateComponentSubmit} disabled={!newCompName.trim() || isLoading} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg flex items-center gap-1">생성</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {pendingRelation && (
+                    <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-[420px] flex flex-col overflow-hidden animate-fade-in-up">
+                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 flex justify-between items-center text-white">
+                                <h3 className="font-extrabold flex items-center gap-2"><VscLink size={18} /> 객체지향 관계 주입</h3>
+                                <button onClick={() => setPendingRelation(null)} className="text-blue-100 hover:text-white transition-colors"><VscClose size={20}/></button>
+                            </div>
+                            <div className="p-6 flex flex-col gap-4">
+                                <div className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                    <div className="flex flex-col text-center">
+                                        <span className="text-[10px] text-gray-500 font-bold mb-1">Source (주입받을 곳)</span>
+                                        <span className="text-sm font-mono font-bold text-blue-700">{pendingRelation.source.split('/').pop().replace('.java', '')}</span>
+                                    </div>
+                                    <VscLink size={20} className="text-gray-400 rotate-45"/>
+                                    <div className="flex flex-col text-center">
+                                        <span className="text-[10px] text-gray-500 font-bold mb-1">Target (주입할 객체)</span>
+                                        <span className="text-sm font-mono font-bold text-indigo-700">{pendingRelation.target.split('/').pop().replace('.java', '')}</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-[12px] font-bold text-gray-600 mb-2">어떤 관계로 연결하시겠습니까?</label>
+                                    <div className="flex flex-col gap-2">
+                                        <label className={`border rounded-lg p-3 flex flex-col cursor-pointer transition-colors ${relationType === 'EXTENDS' ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                            <div className="flex items-center gap-2"><input type="radio" checked={relationType === 'EXTENDS'} onChange={() => setRelationType('EXTENDS')} className="hidden" /><span className="font-bold text-blue-700 text-sm">상속 (Extends)</span></div>
+                                            <span className="text-[11px] text-gray-500 mt-1 pl-1">Source 클래스가 Target 클래스를 상속받습니다.</span>
+                                        </label>
+                                        <label className={`border rounded-lg p-3 flex flex-col cursor-pointer transition-colors ${relationType === 'IMPLEMENTS' ? 'border-green-500 bg-green-50 shadow-sm' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                            <div className="flex items-center gap-2"><input type="radio" checked={relationType === 'IMPLEMENTS'} onChange={() => setRelationType('IMPLEMENTS')} className="hidden" /><span className="font-bold text-green-700 text-sm">구현 (Implements)</span></div>
+                                            <span className="text-[11px] text-gray-500 mt-1 pl-1">Source 클래스가 Target 인터페이스를 구현합니다.</span>
+                                        </label>
+                                        <label className={`border rounded-lg p-3 flex flex-col cursor-pointer transition-colors ${relationType === 'COMPOSITION' ? 'border-purple-500 bg-purple-50 shadow-sm' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                            <div className="flex items-center gap-2"><input type="radio" checked={relationType === 'COMPOSITION'} onChange={() => setRelationType('COMPOSITION')} className="hidden" /><span className="font-bold text-purple-700 text-sm">참조/합성 (Composition)</span></div>
+                                            <span className="text-[11px] text-gray-500 mt-1 pl-1">Source 내부에 Target 객체를 필드(변수)로 선언합니다.</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-gray-50 p-4 border-t border-gray-100 flex justify-end gap-2">
+                                <button onClick={() => setPendingRelation(null)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-lg">취소</button>
+                                <button onClick={handleRelationSubmit} disabled={isLoading} className="px-5 py-2 text-sm font-bold text-white bg-gray-900 hover:bg-black rounded-lg flex items-center gap-1">
+                                    {isLoading ? <VscRefresh className="animate-spin" /> : <VscLink />} 관계 코드 주입하기
                                 </button>
                             </div>
                         </div>
-                    )}
+                    </div>
+                )}
+
+                {/* 범례 및 사이드패널... (생략 없음) */}
+                <div className="absolute left-4 bottom-4 bg-white/95 backdrop-blur-md p-4 rounded-xl border border-gray-200 shadow-lg z-10 flex flex-col pointer-events-none w-[360px]">
+                    <div className="text-[12px] font-extrabold text-gray-800 border-b border-gray-100 pb-2 mb-3 flex items-center gap-1.5">🎨 아키텍처 맵 범례 (Legend)</div>
+                    <div className="flex gap-4">
+                        <div className="flex-1 flex flex-col gap-2 border-r border-gray-100 pr-4">
+                            <div className="text-[10px] font-bold text-gray-400 mb-1">컴포넌트 역할</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><span className="w-2.5 h-2.5 rounded-full bg-red-50 border-2 border-red-400"></span> 실행 진입점 (Main)</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><span className="w-2.5 h-2.5 rounded-full bg-purple-50 border-2 border-purple-400"></span> 인터페이스</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><span className="w-2.5 h-2.5 rounded-full bg-orange-50 border-2 border-orange-400 border-dashed"></span> 추상 클래스</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><span className="w-2.5 h-2.5 rounded-full bg-blue-50 border-2 border-blue-400"></span> 구현 클래스</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><span className="w-2.5 h-2.5 rounded-full bg-rose-50 border-2 border-rose-400"></span> 예외 (Exception)</div>
+                        </div>
+                        <div className="flex-1 flex flex-col gap-2">
+                            <div className="text-[10px] font-bold text-gray-400 mb-1">의존성 및 관계 (Edges)</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><div className="w-5 h-[2px] bg-blue-500 rounded-full relative"><div className="absolute -right-1 -top-1 border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent border-l-blue-500"></div></div> 상속 (Extends)</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><div className="w-5 h-[2px] border-b-2 border-dashed border-green-500 relative"><div className="absolute -right-1 -top-[3px] border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent border-l-green-500"></div></div> 구현 (Implements)</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><div className="w-5 h-[2px] border-b-2 border-dashed border-[#6366f1] relative"><div className="absolute -right-1 -top-[3px] border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent border-l-[#6366f1]"></div></div> 참조 (Composition)</div>
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-gray-600"><div className="w-5 h-[2px] border-b-2 border-dashed border-gray-400 relative"><div className="absolute -right-1 -top-[3px] border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent border-l-gray-400"></div></div> 단순 참조 (Import)</div>
+                        </div>
+                    </div>
                 </div>
+
+                {selectedNode && (
+                    <div className={`${panelSizeClass} bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)] rounded-2xl z-[100] flex flex-col overflow-hidden animate-fade-in border border-gray-100`}>
+                        <div className={`p-6 overflow-y-auto custom-scrollbar flex-1`}>
+                            <h3 className="font-extrabold text-gray-900 text-lg mb-4">컴포넌트 개요</h3>
+                            <div className="space-y-4">
+                                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-4 rounded-xl border border-blue-100 shadow-sm relative overflow-hidden">
+                                    <div className="text-[12px] font-extrabold text-indigo-800 mb-2 flex items-center gap-1.5"><span className="text-base animate-pulse">✨</span> AI 컴포넌트 분석</div>
+                                    {isSummaryLoading ? (
+                                        <div className="animate-pulse flex flex-col gap-2 mt-2"><div className="h-2.5 bg-blue-200/50 rounded w-full"></div><div className="h-2.5 bg-blue-200/50 rounded w-5/6"></div><div className="h-2.5 bg-blue-200/50 rounded w-4/6"></div></div>
+                                    ) : (<div className="text-[11px] text-gray-700 leading-relaxed font-semibold whitespace-pre-wrap">{aiSummary}</div>)}
+                                </div>
+                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <div className="text-[10px] font-bold text-gray-400 mb-0.5">파일 이름</div>
+                                    <div className="text-[13px] font-bold text-blue-600 truncate" title={selectedNode.label}>{selectedNode.label}.java</div>
+                                    <div className="flex gap-2 mt-2">
+                                        <span className="text-[10px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded">{selectedNode.type}</span>
+                                        <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded uppercase">{selectedNode.role}</span>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 mb-2"><VscLink className="rotate-45" /> 의존하고 있는 컴포넌트 (Imports)</div>
+                                    {dependencies.imports.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {dependencies.imports.map((dep, idx) => (
+                                                <div key={idx} className="text-[10px] font-bold border border-gray-200 bg-white px-2 py-1 rounded text-gray-600 shadow-sm cursor-pointer hover:border-blue-300 hover:text-blue-600 transition-colors" onClick={() => setSelectedNode(dep)}>{dep.label}</div>
+                                            ))}
+                                        </div>
+                                    ) : (<div className="text-[10px] text-gray-400">외부 의존성이 없습니다.</div>)}
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 mb-2"><VscLink className="-rotate-45" /> 이 컴포넌트를 호출하는 곳 (Imported By)</div>
+                                    {dependencies.importedBy.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {dependencies.importedBy.map((dep, idx) => (
+                                                <div key={idx} className="text-[10px] font-bold border border-blue-200 bg-blue-50 px-2 py-1 rounded text-blue-700 shadow-sm cursor-pointer hover:bg-blue-100 transition-colors" onClick={() => setSelectedNode(dep)}>{dep.label}</div>
+                                            ))}
+                                        </div>
+                                    ) : (<div className="text-[10px] text-gray-400">호출하는 곳이 없습니다.</div>)}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-3 bg-gray-50 border-t border-gray-100 shrink-0">
+                            <button onClick={openFileInEditor} className="w-full py-2 bg-gray-900 hover:bg-black text-white rounded-lg text-[12px] font-bold transition-colors flex items-center justify-center gap-1.5 shadow-md">
+                                에디터에서 열기 <VscGoToFile size={14} />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

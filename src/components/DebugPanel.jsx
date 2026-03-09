@@ -2,16 +2,17 @@
 
 import React from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { setDebugMode, writeToTerminal } from '../store/slices/uiSlice';
+import { setDebugMode, writeToTerminal, setCurrentDebugLine, updateDebugVariables } from '../store/slices/uiSlice';
 import { VscDebugDisconnect, VscDebugStart, VscDebugStepOver, VscDebugStepInto, VscClose } from "react-icons/vsc";
 import { DebugSocket } from '../utils/debugSocket';
 
 export default function DebugPanel() {
   const dispatch = useDispatch();
-  const { debugVariables, currentDebugLine, isDebugMode } = useSelector(state => state.ui);
+  
+  const { debugVariables, currentDebugLine, isDebugMode, breakpoints } = useSelector(state => state.ui);
+  const { workspaceId, activeProject, activeBranch, activeFileId } = useSelector(state => state.fileSystem);
 
   const handleClose = () => {
-      // 디버그 모드 종료 및 창 닫기
       dispatch(setDebugMode(false));
       if (DebugSocket && typeof DebugSocket.stopDebug === 'function') {
           DebugSocket.stopDebug();
@@ -19,18 +20,65 @@ export default function DebugPanel() {
       dispatch(writeToTerminal('[System] 디버깅을 중지하고 패널을 닫습니다.\n'));
   };
 
+  const handleStartDebug = () => {
+      if (!workspaceId || !activeProject) {
+          alert("디버깅할 프로젝트를 먼저 선택해주세요.");
+          return;
+      }
+
+      dispatch(setDebugMode(true));
+      dispatch(writeToTerminal('[System] 백엔드 디버거와 연결을 시도합니다...\n'));
+
+      DebugSocket.connect(
+          "ws://localhost:8080/ws/debug",
+          (ws) => {
+              dispatch(writeToTerminal('[System] 디버거 연결 성공! 디버깅을 시작합니다.\n'));
+              DebugSocket.startDebug(
+                  workspaceId, 
+                  activeProject, 
+                  activeBranch || 'master', 
+                  activeFileId || '', 
+                  breakpoints
+              );
+          },
+          (msg) => {
+              // 💡 [핵심 이사 완료] IdeMain.jsx에 있던 메시지 처리 로직을 여기로 가져왔습니다!
+              try {
+                  const data = JSON.parse(msg);
+                  if (data.type === 'SUSPENDED') {
+                      dispatch(setCurrentDebugLine({ line: data.line, path: data.path }));
+                      dispatch(updateDebugVariables(data.variables || {}));
+                  } 
+                  else if (data.type === 'OUTPUT' || data.type === 'ERROR') {
+                      dispatch(writeToTerminal((data.data || '') + '\n'));
+                      if (data.data && data.data.includes('Debugging Finished')) {
+                          dispatch(setDebugMode(false));
+                          dispatch(setCurrentDebugLine(null));
+                          dispatch(updateDebugVariables({}));
+                      }
+                  }
+              } catch (e) { 
+                  dispatch(writeToTerminal(msg + '\n')); 
+              }
+          },
+          (error) => {
+              dispatch(setDebugMode(false));
+              dispatch(setCurrentDebugLine(null));
+              dispatch(updateDebugVariables({}));
+              dispatch(writeToTerminal('[System] 디버거 연결이 종료되었습니다.\n'));
+          }
+      );
+  };
+
   return (
     <div className="h-full w-full bg-white flex flex-col text-gray-800 font-sans">
-      {/* 헤더 */}
       <div className="h-9 px-4 flex items-center justify-between text-xs font-bold uppercase tracking-wide border-b border-gray-200 bg-[#f8f9fa]">
         <span className="text-gray-700">Run & Debug</span>
-        {/* 닫기(나가기) 버튼 추가 */}
         <button onClick={handleClose} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-500 transition-colors" title="디버그 패널 닫기">
             <VscClose size={16} />
         </button>
       </div>
 
-      {/* 컨트롤 패널 (상태 표시 및 디버그 버튼) */}
       <div className="p-4 bg-white border-b border-gray-200">
         {isDebugMode ? (
             <div className="flex flex-col gap-3">
@@ -53,14 +101,13 @@ export default function DebugPanel() {
         ) : (
             <div className="flex flex-col gap-3">
                 <div className="text-xs text-gray-500">No active debug session.</div>
-                <button className="w-full flex items-center justify-center gap-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded transition-colors">
+                <button onClick={handleStartDebug} className="w-full flex items-center justify-center gap-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded transition-colors">
                     <VscDebugStart size={14} /> Start Debugging
                 </button>
             </div>
         )}
       </div>
 
-      {/* 1. 변수 섹션 */}
       <div className="flex-1 overflow-auto">
         <div className="px-3 py-1.5 bg-gray-100 text-xs font-bold text-gray-600 mt-2 border-y border-gray-200">VARIABLES</div>
         <div className="p-2 space-y-1">
@@ -76,7 +123,6 @@ export default function DebugPanel() {
             )}
         </div>
 
-        {/* 2. 콜스택 섹션 */}
         <div className="px-3 py-1.5 bg-gray-100 text-xs font-bold text-gray-600 mt-4 border-y border-gray-200">CALL STACK</div>
         <div className="p-2 space-y-1">
              {currentDebugLine ? (

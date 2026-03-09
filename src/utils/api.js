@@ -264,3 +264,65 @@ export const abortMergeApi = async (workspaceId, projectName, branchName) => {
     });
     if (!response.ok) throw new Error("병합 취소 실패");
 };
+
+export const createCodeMapComponentApi = async (workspaceId, projectName, branchName, name, type) => {
+    const response = await fetch(`http://localhost:8080/api/codemap/components`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, projectName, branchName, name, type })
+    });
+    if (!response.ok) throw new Error("컴포넌트 생성 실패");
+    return await response.text();
+};
+
+// src/utils/api.js 파일 맨 아래에 추가
+
+export const createCodeMapRelationApi = async (workspaceId, projectName, branchName, sourceNode, targetNode, relationType) => {
+    const response = await fetch(`http://localhost:8080/api/codemap/relations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, projectName, branchName, sourceNode, targetNode, relationType })
+    });
+    if (!response.ok) throw new Error("관계(의존성) 주입 실패");
+    return await response.text();
+};
+
+// src/utils/api.js 맨 아래
+
+export const deleteCodeMapRelationApi = async (workspaceId, projectName, branchName, sourceNode, targetNode, relationType) => {
+    const response = await fetch(`http://localhost:8080/api/codemap/relations`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, projectName, branchName, sourceNode, targetNode, relationType })
+    });
+    
+    // 💡 [해결 2] 백엔드가 던진 상세 에러 메시지를 가로채서 에러를 발생시킵니다.
+    if (!response.ok) {
+        const errorMsg = await response.text();
+        throw new Error(errorMsg || "관계 삭제 실패");
+    }
+    return await response.text();
+};
+
+// src/utils/api.js 맨 아래 추가
+export const fetchAiAssistApi = async (payload) => {
+    const response = await fetch(`http://localhost:8080/api/ai/assist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error("AI 어시스트 요청 실패");
+    return await response.json();
+};
+
+// 파일 맨 아래에 추가해 주세요!
+
+export const fetchAiAutocompleteApi = async (payload) => {
+    const response = await fetch(`http://localhost:8080/api/ai/autocomplete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error("Autocomplete failed");
+    return await response.text(); // 여기선 JSON이 아니라 그냥 쌩 텍스트(코드)를 받습니다.
+};

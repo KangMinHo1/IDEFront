@@ -2,12 +2,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { setActiveBranch, closeAllFiles, closeFile } from '../store/slices/fileSystemSlice';
-import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal } from '../store/slices/uiSlice';
+// 💡 [수정] openCodeMapTab import 추가!
+import { setActiveBranch, closeAllFiles, closeFile, openCodeMapTab } from '../store/slices/fileSystemSlice';
+import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal, setCodeMapMode } from '../store/slices/uiSlice'; 
 import { DebugSocket } from '../utils/debugSocket'; 
 import { RunSocket } from '../utils/runSocket'; 
 import { VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh } from "react-icons/vsc";
-// 💡 updateGitUrlApi는 더 이상 여기서 안 쓰므로 뺐습니다.
 import { fetchBranchListApi, createBranchApi, saveFileApi } from '../utils/api'; 
 
 const getLanguageFromPath = (path) => {
@@ -30,7 +30,7 @@ export default function MenuBar() {
   const dispatch = useDispatch();
   
   const { workspaceId, activeProject, activeBranch, fileContents, activeFileId } = useSelector(state => state.fileSystem);
-  const { isTerminalVisible, breakpoints } = useSelector(state => state.ui);
+  const { isTerminalVisible, breakpoints, codeMapMode } = useSelector(state => state.ui); 
 
   const [activeMenu, setActiveMenu] = useState(null);
   const [isNotiOpen, setIsNotiOpen] = useState(false);
@@ -107,7 +107,6 @@ export default function MenuBar() {
               }
               try {
                   const content = fileContents[activeFileId] || '';
-                  // 💡 [수정] 저장할 때 기준도 master로!
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   if (!isTerminalVisible) dispatch(toggleTerminal());
                   dispatch(writeToTerminal(`[System] Saved: ${activeFileId}\n`));
@@ -182,7 +181,6 @@ export default function MenuBar() {
 
               try {
                   const content = fileContents[activeFileId] || '';
-                  // 💡 [수정]
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   dispatch(writeToTerminal(`\r\n[System] 코드를 자동 저장했습니다: ${activeFileId}\r\n`));
               } catch (error) {
@@ -200,7 +198,7 @@ export default function MenuBar() {
                   DebugSocket.startDebug(
                       workspaceId, 
                       activeProject, 
-                      activeBranch || 'master', // 💡 [수정]
+                      activeBranch || 'master', 
                       activeFileId, 
                       currentFileBreakpoints 
                   );
@@ -218,7 +216,6 @@ export default function MenuBar() {
               
               try {
                   const content = fileContents[activeFileId] || '';
-                  // 💡 [수정]
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   dispatch(writeToTerminal(`\r\n[System] 코드를 자동 저장했습니다: ${activeFileId}\r\n`));
               } catch (error) {
@@ -233,7 +230,7 @@ export default function MenuBar() {
                   type: 'RUN',
                   workspaceId: workspaceId,
                   projectName: activeProject,
-                  branchName: activeBranch || 'master', // 💡 [수정]
+                  branchName: activeBranch || 'master', 
                   filePath: activeFileId,
                   language: language
               };
@@ -281,7 +278,7 @@ export default function MenuBar() {
                   body: JSON.stringify({
                       workspaceId: workspaceId,
                       projectName: activeProject,
-                      branchName: activeBranch || 'master' // 💡 [수정]
+                      branchName: activeBranch || 'master' 
                   })
               })
               .then(async (res) => {
@@ -334,12 +331,20 @@ export default function MenuBar() {
           case '정보':
           case '문서':
           case '키보드 단축키':
-          case '전체 화면':
-          case '분할 화면':
           case 'Commit & Merge':
           case 'Repository Settings':
               if (!isTerminalVisible) dispatch(toggleTerminal());
               dispatch(writeToTerminal(`[System] ${itemName} 기능 준비 중입니다.\n`));
+              break;
+
+          // 💡 [핵심 수정] 탭 생성 및 모드 변경 동시 실행!
+          case '전체 화면':
+              dispatch(setCodeMapMode('full'));       // 1. 모드를 전체화면으로 세팅
+              dispatch(openCodeMapTab('full'));       // 2. 가상의 탭을 만들고 포커스 이동!
+              break;
+          case '분할 화면':
+              dispatch(setCodeMapMode('split'));      // 1. 모드를 분할화면으로 세팅
+              dispatch(openCodeMapTab('split'));      // 2. 가상의 탭을 만들고 포커스 이동!
               break;
               
           default:
@@ -379,7 +384,7 @@ export default function MenuBar() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeFileId, workspaceId, activeProject, activeBranch, fileContents, isTerminalVisible]);
+  }, [activeFileId, workspaceId, activeProject, activeBranch, fileContents, isTerminalVisible, codeMapMode]); 
 
   const gnbMenus = ['대시보드', '일정관리', '개발일지', '마이페이지', '이용가이드'];
   
@@ -452,7 +457,6 @@ export default function MenuBar() {
     ]}
   ];
 
-  // 💡 [수정] URL 여부와 상관없이 오직 브랜치 이름만 표시!
   const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
 
   return (
@@ -477,31 +481,31 @@ export default function MenuBar() {
 
       <div className="flex items-center justify-between px-4 h-9 bg-[#f8f9fa] border-t border-gray-100 relative" ref={menuRef}>
         <div className="flex items-center gap-1 text-[13px] text-gray-700">
-            {subMenus.map(menu => (
-                <div key={menu.name} className="relative">
-                    <div 
-                        className={`cursor-pointer px-3 py-1 rounded transition-colors ${activeMenu === menu.name ? 'bg-gray-200 font-medium' : 'hover:bg-gray-200'}`} 
-                        onClick={() => setActiveMenu(activeMenu === menu.name ? null : menu.name)}
-                    >
-                        {menu.name}
-                    </div>
-                    
-                    {activeMenu === menu.name && (
-                        <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 shadow-[0_4px_16px_rgba(0,0,0,0.1)] rounded-md py-1.5 z-[9999]">
-                            {menu.items.map((item, idx) => (
-                                <div 
-                                    key={idx} 
-                                    onClick={() => handleMenuItemClick(menu.name, item.label)} 
-                                    className="px-5 py-1.5 hover:bg-blue-50 hover:text-blue-600 cursor-pointer text-[13px] text-gray-700 transition-colors flex justify-between items-center"
-                                >
-                                    <span>{item.label}</span>
-                                    {item.shortcut && <span className="text-[11px] text-gray-400">{item.shortcut}</span>}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            ))}
+             {subMenus.map(menu => (
+                 <div key={menu.name} className="relative">
+                     <div 
+                         className={`cursor-pointer px-3 py-1 rounded transition-colors ${activeMenu === menu.name ? 'bg-gray-200 font-medium' : 'hover:bg-gray-200'}`} 
+                         onClick={() => setActiveMenu(activeMenu === menu.name ? null : menu.name)}
+                     >
+                         {menu.name}
+                     </div>
+                     
+                     {activeMenu === menu.name && (
+                         <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 shadow-[0_4px_16px_rgba(0,0,0,0.1)] rounded-md py-1.5 z-[9999]">
+                             {menu.items.map((item, idx) => (
+                                 <div 
+                                     key={idx} 
+                                     onClick={() => handleMenuItemClick(menu.name, item.label)} 
+                                     className="px-5 py-1.5 hover:bg-blue-50 hover:text-blue-600 cursor-pointer text-[13px] text-gray-700 transition-colors flex justify-between items-center"
+                                 >
+                                     <span>{item.label}</span>
+                                     {item.shortcut && <span className="text-[11px] text-gray-400">{item.shortcut}</span>}
+                                 </div>
+                             ))}
+                         </div>
+                     )}
+                 </div>
+             ))}
         </div>
 
         <div className="flex items-center gap-3">
@@ -528,7 +532,6 @@ export default function MenuBar() {
                             <p className="text-[10px] text-gray-500 truncate">Project: {activeProject}</p>
                         </div>
                         
-                        {/* 💡 [핵심] URL 연동 폼을 싹 덜어내고, 오직 로컬 브랜치 목록만 보여줍니다! */}
                         <div className="max-h-40 overflow-y-auto">
                             {branches.map(branch => (
                                 <div 
