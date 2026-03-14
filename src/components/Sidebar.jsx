@@ -25,48 +25,35 @@ const getFileIcon = (name) => {
     }
 };
 
-// 💡 [수정] selectedFileProject 프롭스 추가 (하이라이트를 위해 현재 선택된 파일의 소속 프로젝트를 받음)
-const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandProject, onFileClick, onContextMenu }) => {
+const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, onContextMenu }) => {
     const { activeFileId, activeProject } = useSelector(state => state.fileSystem);
-    
-    const nodeType = String(node.type || '').toLowerCase();
-    const isProject = nodeType === 'project';
-    const isFolder = nodeType === 'folder' || nodeType === 'directory' || (node.children && Array.isArray(node.children));
+    const [isExpanded, setIsExpanded] = useState(false);
 
-    const currentProjectName = isProject ? node.name : projectName;
-    const isStartupProject = isProject && activeProject === node.name;
-
-    const [isExpanded, setIsExpanded] = useState(isStartupProject);
-
-    useEffect(() => {
-        if (isStartupProject) {
-            setIsExpanded(true);
-        }
-    }, [isStartupProject]);
+    const currentProjectName = node.type === 'project' ? node.name : projectName;
 
     const getIcon = () => {
-        if (isProject) return <VscRepo className="text-blue-600" />;
-        if (isFolder) return <VscFolder className="text-yellow-500" />;
+        if (node.type === 'project') return <VscRepo className="text-blue-600" />;
+        if (node.type === 'folder') return <VscFolder className="text-yellow-500" />;
         return getFileIcon(node.name);
     };
 
     const handleClick = async (e) => {
         e.stopPropagation();
 
-        if (isProject) {
+        if (node.type === 'project') {
             if (!isExpanded && (!node.children || node.children.length === 0)) {
                 await onExpandProject(node.name);
             }
             setIsExpanded(!isExpanded);
-        } else if (isFolder) {
-            setIsExpanded(!isExpanded); 
+        } else if (node.type === 'folder') {
+            setIsExpanded(!isExpanded);
         } else {
             onFileClick(node, currentProjectName);
         }
     };
 
-    // 💡 [핵심 수정] 파일 이름이 같더라도, 클릭했던 프로젝트와 현재 렌더링 중인 프로젝트가 일치할 때만 파란색 칠하기!
-    const isSelected = activeFileId === node.id && selectedFileProject === currentProjectName;
+    const isSelected = activeFileId === node.id;
+    const isStartupProject = node.type === 'project' && activeProject === node.name;
 
     return (
         <div className="select-none font-sans">
@@ -81,11 +68,10 @@ const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandP
             >
                 <div className="flex items-center overflow-hidden">
                     <span className="mr-1.5 opacity-60 text-gray-500 shrink-0">
-                        {isFolder ? (
+                        {(node.type === 'folder' || node.type === 'project') && (
                             isExpanded ? <VscChevronDown size={14} /> : <VscChevronRight size={14} />
-                        ) : (
-                            <span className="w-[14px] inline-block"/>
                         )}
+                        {node.type === 'file' && <span className="w-[14px] inline-block"/>}
                     </span>
                     <span className="mr-1.5 shrink-0">{getIcon()}</span>
                     <span className={`truncate ${node.name.startsWith('.') ? 'opacity-50' : ''} ${isStartupProject ? 'font-bold text-blue-700' : ''}`}>
@@ -100,15 +86,17 @@ const FileTreeItem = ({ node, depth, projectName, selectedFileProject, onExpandP
                 )}
             </div>
 
+            {/* 💡 [핵심 수정] 자식 렌더링 시 $$codemap$$ 이라는 이름을 가진 요소는 아예 화면에서 지워버립니다! */}
             {isExpanded && Array.isArray(node.children) && (
                 <div>
-                    {node.children.map(child => (
+                    {node.children
+                        .filter(child => child.name !== '$$codemap$$' && !child.name.includes('$$codemap$$')) 
+                        .map(child => (
                         <FileTreeItem 
-                            key={child.id || child.name} 
+                            key={child.id} 
                             node={child} 
                             depth={depth + 1} 
                             projectName={currentProjectName}
-                            selectedFileProject={selectedFileProject} // 💡 자식에게도 전달
                             onExpandProject={onExpandProject}
                             onFileClick={onFileClick}
                             onContextMenu={onContextMenu}
@@ -129,21 +117,10 @@ export default function Sidebar() {
   const inputRef = useRef(null);
   const [contextMenu, setContextMenu] = useState(null); 
   
-  // 💡 [핵심 추가] 시작 프로젝트(activeProject)와 별개로, '현재 하이라이트 될 파일의 소속 프로젝트'를 따로 기억합니다.
-  const [selectedFileProject, setSelectedFileProject] = useState(activeProject);
-
   const handleExpandProject = async (projectName) => {
       try {
           const branchToFetch = (projectName === activeProject && activeBranch) ? activeBranch : "master";
-          const response = await fetchProjectFilesApi(workspaceId, projectName, branchToFetch);
-
-          let files = [];
-          if (Array.isArray(response)) {
-              files = response;
-          } else if (response && Array.isArray(response.children)) {
-              files = response.children;
-          }
-
+          const files = await fetchProjectFilesApi(workspaceId, projectName, branchToFetch);
           dispatch(mergeProjectFiles({ projectName, files }));
       } catch (e) {
           console.error("파일 로드 실패:", e);
@@ -153,16 +130,12 @@ export default function Sidebar() {
   useEffect(() => {
       if (workspaceId && activeProject) {
           handleExpandProject(activeProject);
-          setSelectedFileProject(activeProject); // 프로젝트가 바뀌면 초기화
       }
   }, [activeBranch, workspaceId, activeProject]);
 
   const handleFileClick = async (node, realProjectName) => {
-      const targetProject = realProjectName || activeProject; 
-      
-      // 💡 [수정] 시작 프로젝트(activeProject)는 냅두고, 하이라이트용 상태만 바꿉니다! (자동 전환 기능 제거)
-      setSelectedFileProject(targetProject);
       dispatch(openFile(node));
+      const targetProject = realProjectName || activeProject; 
       
       try {
           const branchToFetch = (targetProject === activeProject && activeBranch) ? activeBranch : "master";
@@ -192,7 +165,10 @@ export default function Sidebar() {
     if (!name) { dispatch(endCreation()); return; }
     try {
         let path = name; 
-        if(parentId !== 'root-folder') path = parentId + "/" + name; 
+        
+        if(parentId !== 'root-folder' && parentId !== '') {
+            path = parentId + "/" + name; 
+        }
         
         await createFileApi(workspaceId, activeProject, activeBranch, path, pendingCreation.type);
         
@@ -219,16 +195,13 @@ export default function Sidebar() {
   const handleContextMenu = (e, node) => {
       e.preventDefault();
       e.stopPropagation();
-      
-      const nodeType = String(node.type || '').toLowerCase();
-      
       setContextMenu({
           x: e.clientX,
           y: e.clientY,
           fileId: node.id,
           path: node.id, 
-          type: nodeType,
-          isRoot: nodeType === 'project'
+          type: node.type,
+          isRoot: node.type === 'project'
       });
   };
 
@@ -259,6 +232,23 @@ export default function Sidebar() {
       setContextMenu(null);
   };
 
+  const handleContextMenuNew = (creationType) => {
+      if (!contextMenu) return;
+
+      let parentId = contextMenu.path;
+      
+      if (contextMenu.type === 'project') {
+          parentId = '';
+      } else if (contextMenu.type === 'file') {
+          const pathParts = parentId.split('/');
+          pathParts.pop(); 
+          parentId = pathParts.join('/'); 
+      }
+
+      dispatch(startCreation({ type: creationType, parentId: parentId }));
+      setContextMenu(null); 
+  };
+
   if (!isSidebarVisible) return null;
 
   return (
@@ -267,8 +257,10 @@ export default function Sidebar() {
            <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">워크스페이스 탐색기</span>
            <div className="flex gap-2 text-gray-500">
                <VscRefresh className="cursor-pointer hover:text-black transition-colors" onClick={refreshWorkspace} title="새로고침"/>
-               <VscNewFile className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'file', parentId: activeProject || 'root-folder' })); }} title="새 파일" />
-               <VscNewFolder className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'folder', parentId: activeProject || 'root-folder' })); }} title="새 폴더" />
+               
+               <VscNewFile className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'file', parentId: activeProject ? '' : 'root-folder' })); }} title="새 파일" />
+               <VscNewFolder className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'folder', parentId: activeProject ? '' : 'root-folder' })); }} title="새 폴더" />
+               
                <VscCollapseAll className="cursor-pointer hover:text-black transition-colors" title="모두 접기" />
            </div>
        </div>
@@ -281,11 +273,10 @@ export default function Sidebar() {
           {tree && Array.isArray(tree.children) && tree.children.length > 0 ? (
               tree.children.map(projectNode => (
                   <FileTreeItem 
-                      key={projectNode.id || projectNode.name} 
+                      key={projectNode.id} 
                       node={projectNode} 
                       depth={0} 
                       projectName={projectNode.name} 
-                      selectedFileProject={selectedFileProject} // 💡 추가됨
                       onExpandProject={handleExpandProject} 
                       onFileClick={handleFileClick}
                       onContextMenu={handleContextMenu}
@@ -315,6 +306,21 @@ export default function Sidebar() {
              className="fixed bg-white border border-gray-200 shadow-[0_4px_12px_rgba(0,0,0,0.1)] rounded-md py-1.5 w-48 z-[9999]"
              style={{ top: contextMenu.y, left: contextMenu.x }}
            >
+               <div 
+                   className="px-4 py-1.5 hover:bg-gray-100 cursor-pointer text-[13px] flex items-center gap-2 text-gray-700 transition-colors" 
+                   onClick={() => handleContextMenuNew('file')}
+               >
+                   <VscNewFile size={14} className="text-gray-500" /> 새 파일 (New File)
+               </div>
+               <div 
+                   className="px-4 py-1.5 hover:bg-gray-100 cursor-pointer text-[13px] flex items-center gap-2 text-gray-700 transition-colors" 
+                   onClick={() => handleContextMenuNew('folder')}
+               >
+                   <VscNewFolder size={14} className="text-gray-500" /> 새 폴더 (New Folder)
+               </div>
+
+               <div className="h-[1px] bg-gray-100 my-1 mx-2"/>
+
                {contextMenu.isRoot && (
                    <>
                        <div 

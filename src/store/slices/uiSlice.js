@@ -1,4 +1,5 @@
 // src/store/slices/uiSlice.js
+
 import { createSlice } from '@reduxjs/toolkit';
 
 const initialState = {
@@ -8,8 +9,8 @@ const initialState = {
   isAboutVisible: false,
   isProjectModalVisible: false, 
   isCommandPaletteVisible: false,
-  isCodeMapVisible: false, 
-  codeMapMode: 'full', // 💡 [추가] 'full' (전체화면) 또는 'split' (분할화면)
+  
+  codeMapMode: null, 
   
   activeBottomTab: 'terminal', 
   activeActivity: 'editor',
@@ -26,6 +27,10 @@ const initialState = {
   terminalOutput: null,
   editorCmd: null,
   pendingCreation: null,
+
+  agentMessages: [],
+  // 💡 [핵심 추가] 사용자가 에디터에서 드래그한 텍스트를 저장할 공간
+  selectedText: '', 
 };
 
 const uiSlice = createSlice({
@@ -36,17 +41,12 @@ const uiSlice = createSlice({
     toggleTerminal: (state) => { state.isTerminalVisible = !state.isTerminalVisible; },
     toggleAgent: (state) => { state.isAgentVisible = !state.isAgentVisible; },
     toggleAbout: (state) => { state.isAboutVisible = !state.isAboutVisible; },
+    
     closeCommandPalette: (state) => { state.isCommandPaletteVisible = false; },
     toggleCommandPalette: (state) => { state.isCommandPaletteVisible = !state.isCommandPaletteVisible; },
 
-    // 💡 [수정] 맵 열기(모드 지정) 및 닫기 액션
-    openCodeMap: (state, action) => { 
-        state.isCodeMapVisible = true; 
-        state.codeMapMode = action.payload; // 'full' or 'split'
-    },
-    closeCodeMap: (state) => { 
-        state.isCodeMapVisible = false; 
-    },
+    setCodeMapMode: (state, action) => { state.codeMapMode = action.payload; },
+    closeCodeMap: (state) => { state.codeMapMode = null; },
 
     setActiveBottomTab: (state, action) => { state.activeBottomTab = action.payload; },
     setActiveActivity: (state, action) => { state.activeActivity = action.payload; },
@@ -54,17 +54,11 @@ const uiSlice = createSlice({
     setActiveMyPageTab: (state, action) => { state.activeMyPageTab = action.payload; },
     openProjectModal: (state) => { state.isProjectModalVisible = true; },
     closeProjectModal: (state) => { state.isProjectModalVisible = false; },
-
-    setRunning: (state, action) => { 
-        state.isRunning = action.payload; 
-        if (action.payload) state.activeBottomTab = 'output';
-    },
-    setDebugMode: (state, action) => { 
-        state.isDebugMode = action.payload; 
-        if (action.payload) state.activeBottomTab = 'output';
-    },
-    setCurrentDebugLine: (state, action) => { 
-        state.debugLine = action.payload; 
+    
+    setRunning: (state, action) => { state.isRunning = action.payload; },
+    setDebugMode: (state, action) => { state.isDebugMode = action.payload; },
+    setCurrentDebugLine: (state, action) => {
+        state.debugLine = action.payload;
         if (action.payload) state.activeBottomTab = 'output';
     },
     updateDebugVariables: (state, action) => { state.debugVariables = action.payload; },
@@ -77,11 +71,26 @@ const uiSlice = createSlice({
             state.breakpoints.push({ path, line });
         }
     },
+
     writeToTerminal: (state, action) => { state.terminalOutput = { text: action.payload }; },
     clearTerminalOutput: (state) => { state.terminalOutput = { text: '__CLEAR__' }; },
     triggerEditorCmd: (state, action) => { state.editorCmd = action.payload; },
+    
     startCreation: (state, action) => { state.pendingCreation = action.payload; },
-    endCreation: (state) => { state.pendingCreation = null; }
+    endCreation: (state) => { state.pendingCreation = null; },
+
+    addAgentMessage: (state, action) => {
+        state.agentMessages.push(action.payload);
+        state.isAgentVisible = true; 
+        state.isDebugMode = false;   
+    },
+    clearAgentMessages: (state) => {
+        state.agentMessages = [];
+    },
+    // 💡 [핵심 추가] 드래그 텍스트 업데이트 액션
+    setSelectedText: (state, action) => {
+        state.selectedText = action.payload;
+    }
   },
 });
 
@@ -90,7 +99,9 @@ export const {
     setActiveDocsTab, setActiveMyPageTab, openProjectModal, closeProjectModal, 
     setRunning, setDebugMode, setCurrentDebugLine, updateDebugVariables, toggleBreakpoint,
     writeToTerminal, clearTerminalOutput, triggerEditorCmd, startCreation, endCreation,
-    closeCommandPalette, toggleCommandPalette, openCodeMap, closeCodeMap
+    closeCommandPalette, toggleCommandPalette, setCodeMapMode, closeCodeMap,
+    addAgentMessage, clearAgentMessages, 
+    setSelectedText // 💡 내보내기 추가
 } = uiSlice.actions;
 
 export default uiSlice.reducer;

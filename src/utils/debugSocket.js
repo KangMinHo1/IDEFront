@@ -56,7 +56,9 @@ export const DebugSocket = {
             // 현재 소켓 상태를 더 자세히 보여주도록 수정
             const state = socket ? socket.readyState : 'null';
             console.error(`❌ [DebugSocket] 실패: 소켓이 연결되지 않았습니다! (현재 상태: ${state})`);
-            alert("서버와의 실시간 통신(웹소켓)이 끊어졌습니다. 새로고침(F5) 해주세요.");
+            
+            // 💡 [수정됨] 화면을 멈추는 짜증 나는 alert 팝업 대신, 부드러운 콘솔 경고로 대체합니다.
+            console.warn("💡 서버와의 실시간 통신(웹소켓)이 아직 준비되지 않았습니다. 잠시 후 디버깅 시작 버튼을 다시 눌러주세요.");
         }
     },
 

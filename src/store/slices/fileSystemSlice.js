@@ -3,7 +3,7 @@ import { createSlice } from '@reduxjs/toolkit';
 const initialState = {
   workspaceId: null,
   activeProject: null,       
-  activeBranch: "master",  // 💡 [수정] 기본 브랜치를 master로 변경!
+  activeBranch: "master",
   projectList: [],           
   tree: null, 
   openFiles: [],
@@ -11,6 +11,15 @@ const initialState = {
   fileContents: {},
   expandedFolders: [],
   activeGitView: 'status', 
+  
+  // 💡 [추가] AI 어시스트용 상태 공간 (주문서와 영수증을 보관할 서랍)
+  aiSuggestion: {
+      originalCode: null,   // 수락하기 전의 원래 코드
+      suggestedCode: null,  // AI가 짜준 새로운 코드
+      isDiffMode: false,    // 에디터를 Diff 모드로 바꿀지 여부 (스위치)
+      targetPath: null,     // 현재 AI 작업을 하고 있는 파일 경로
+      explanation: ""       // AI의 설명 (왜 이렇게 짰는지)
+  }
 };
 
 const fileSystemSlice = createSlice({
@@ -34,6 +43,18 @@ const fileSystemSlice = createSlice({
     
     setActiveGitView: (state, action) => { state.activeGitView = action.payload; },
     
+    openCodeMapTab: (state) => {
+        const mapId = 'virtual:codemap';
+        if (!state.openFiles.find(f => f.id === mapId)) {
+            state.openFiles.push({ 
+                id: mapId, 
+                name: 'Architecture Map',
+                type: 'virtual' 
+            });
+        }
+        state.activeFileId = mapId;
+    },
+
     mergeProjectFiles: (state, action) => {
         const { projectName, files } = action.payload;
         if (state.tree && state.tree.children) {
@@ -102,6 +123,30 @@ const fileSystemSlice = createSlice({
         const { filePath, content } = action.payload;
         state.fileContents[filePath] = content;
     },
+
+    // =====================================================================
+    // 💡 [추가] AI 어시스트용 Reducer 액션 함수들 (상태 조작)
+    // =====================================================================
+    
+    // 1. AI 응답을 받아서 Diff 뷰를 켜기 위해 데이터를 저장하는 함수
+    setAiSuggestion: (state, action) => {
+        state.aiSuggestion = {
+            ...state.aiSuggestion,
+            ...action.payload,
+            isDiffMode: true // ⬅️ 이 값이 true가 되면 에디터 화면이 반으로 갈라집니다!
+        };
+    },
+    
+    // 2. 수락/거절을 누른 후, AI 서랍을 깨끗하게 비우고 일반 에디터로 돌아가는 함수
+    clearAiSuggestion: (state) => {
+        state.aiSuggestion = {
+            originalCode: null,
+            suggestedCode: null,
+            isDiffMode: false,
+            targetPath: null,
+            explanation: ""
+        };
+    }
   },
 });
 
@@ -109,7 +154,8 @@ export const {
     setWorkspaceId, setActiveProject, setActiveBranch, setProjectList,
     setWorkspaceTree, updateProjectGitInfo, setActiveFile, closeFile, 
     closeFilesByPath, closeAllFiles, updateFileContent, toggleFolder, mergeProjectFiles, openFile,
-    setActiveGitView
+    setActiveGitView, openCodeMapTab,
+    setAiSuggestion, clearAiSuggestion // 💡 내보내기 추가!
 } = fileSystemSlice.actions;
 
 export default fileSystemSlice.reducer;

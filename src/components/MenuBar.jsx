@@ -1,9 +1,10 @@
 // src/components/MenuBar.jsx
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { setActiveBranch, closeAllFiles, closeFile } from '../store/slices/fileSystemSlice';
-import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal, openCodeMap } from '../store/slices/uiSlice';
+// 💡 [수정] openCodeMapTab import 추가!
+import { setActiveBranch, closeAllFiles, closeFile, openCodeMapTab } from '../store/slices/fileSystemSlice';
+import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal, setCodeMapMode } from '../store/slices/uiSlice'; 
 import { DebugSocket } from '../utils/debugSocket'; 
 import { RunSocket } from '../utils/runSocket'; 
 import { VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh } from "react-icons/vsc";
@@ -24,14 +25,12 @@ const getLanguageFromPath = (path) => {
     }
 };
 
-// 💡 IdeMain에서 상태(isTeamMode)와 전환 함수, 모달 오픈 함수들을 받아옵니다.
-export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, onOpenVoiceChatModal }) {
+export default function MenuBar() {
   const navigate = useNavigate();
-  const location = useLocation(); 
   const dispatch = useDispatch();
   
   const { workspaceId, activeProject, activeBranch, fileContents, activeFileId } = useSelector(state => state.fileSystem);
-  const { isTerminalVisible, breakpoints } = useSelector(state => state.ui);
+  const { isTerminalVisible, breakpoints, codeMapMode } = useSelector(state => state.ui); 
 
   const [activeMenu, setActiveMenu] = useState(null);
   const [isNotiOpen, setIsNotiOpen] = useState(false);
@@ -44,8 +43,6 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
   const menuRef = useRef(null);
   const notiRef = useRef(null);
   const branchRef = useRef(null);
-
-  const isRelocationPage = location.pathname.includes('/relocation');
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -119,10 +116,16 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
               }
               break;
           case '다른 이름으로...':
+              if (!isTerminalVisible) dispatch(toggleTerminal());
+              dispatch(writeToTerminal('[System] 다른 이름으로 저장 기능 준비 중입니다.\n'));
+              break;
           case '모두 저장':
+              if (!isTerminalVisible) dispatch(toggleTerminal());
+              dispatch(writeToTerminal('[System] 모든 변경사항을 저장합니다.\n'));
+              break;
           case '내보내기':
               if (!isTerminalVisible) dispatch(toggleTerminal());
-              dispatch(writeToTerminal(`[System] ${itemName} 기능 준비 중입니다.\n`));
+              dispatch(writeToTerminal('[System] 프로젝트 내보내기를 시작합니다.\n'));
               break;
           case '닫기':
               dispatch(closeFile(activeFileId));
@@ -195,7 +198,7 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
                   DebugSocket.startDebug(
                       workspaceId, 
                       activeProject, 
-                      activeBranch || 'master',
+                      activeBranch || 'master', 
                       activeFileId, 
                       currentFileBreakpoints 
                   );
@@ -227,7 +230,7 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
                   type: 'RUN',
                   workspaceId: workspaceId,
                   projectName: activeProject,
-                  branchName: activeBranch || 'master',
+                  branchName: activeBranch || 'master', 
                   filePath: activeFileId,
                   language: language
               };
@@ -275,7 +278,7 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
                   body: JSON.stringify({
                       workspaceId: workspaceId,
                       projectName: activeProject,
-                      branchName: activeBranch || 'master'
+                      branchName: activeBranch || 'master' 
                   })
               })
               .then(async (res) => {
@@ -325,13 +328,6 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
               dispatch(writeToTerminal('[System] 빌드를 취소했습니다.\n'));
               break;
 
-          case '전체 화면':
-              dispatch(openCodeMap('full'));
-              break;
-          case '분할 화면':
-              dispatch(openCodeMap('split'));
-              break;
-
           case '정보':
           case '문서':
           case '키보드 단축키':
@@ -339,6 +335,16 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
           case 'Repository Settings':
               if (!isTerminalVisible) dispatch(toggleTerminal());
               dispatch(writeToTerminal(`[System] ${itemName} 기능 준비 중입니다.\n`));
+              break;
+
+          // 💡 [핵심 수정] 탭 생성 및 모드 변경 동시 실행!
+          case '전체 화면':
+              dispatch(setCodeMapMode('full'));       // 1. 모드를 전체화면으로 세팅
+              dispatch(openCodeMapTab('full'));       // 2. 가상의 탭을 만들고 포커스 이동!
+              break;
+          case '분할 화면':
+              dispatch(setCodeMapMode('split'));      // 1. 모드를 분할화면으로 세팅
+              dispatch(openCodeMapTab('split'));      // 2. 가상의 탭을 만들고 포커스 이동!
               break;
               
           default:
@@ -375,10 +381,13 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
         handleMenuItemClick(null, '탐색기');
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeFileId, workspaceId, activeProject, activeBranch, fileContents, isTerminalVisible]);
+  }, [activeFileId, workspaceId, activeProject, activeBranch, fileContents, isTerminalVisible, codeMapMode]); 
 
+  const gnbMenus = ['대시보드', '일정관리', '개발일지', '마이페이지', '이용가이드'];
+  
   const subMenus = [
     { name: '파일', items: [
         { label: '새 파일', shortcut: 'Ctrl+N' }, 
@@ -451,21 +460,12 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
   const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
 
   return (
-    <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0 z-40 relative">
-      
-      {/* 1. 최상단 GNB 메뉴 */}
-      <div className="flex items-center justify-between px-6 h-12 relative border-b border-gray-100">
-        <div className="font-extrabold text-xl tracking-tight text-gray-900 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => navigate('/')}>VSIDE</div>
-        
-        <div className="flex items-center gap-8 text-[13px] font-bold text-gray-500">
-            <span className="cursor-pointer hover:text-gray-900 transition-colors">대시보드</span>
-            <span className="cursor-pointer hover:text-gray-900 transition-colors">일정관리</span>
-            <span className="cursor-pointer hover:text-gray-900 transition-colors">개발일지</span>
-            <span onClick={() => { if (workspaceId) navigate(`/relocation/${workspaceId}`); else navigate('/relocation'); }} className={`cursor-pointer transition-colors ${isRelocationPage ? 'text-blue-600 font-extrabold' : 'hover:text-gray-900'}`}>자료 재배치</span>
-            <span className="cursor-pointer hover:text-gray-900 transition-colors">마이페이지</span>
-            <span className="cursor-pointer hover:text-gray-900 transition-colors">이용가이드</span>
+    <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0">
+      <div className="flex items-center justify-between px-6 h-12 relative">
+        <div className="font-extrabold text-xl tracking-tight text-black cursor-pointer" onClick={() => navigate('/')}>VSIDE</div>
+        <div className="flex items-center gap-8 text-[13px] font-medium text-gray-600">
+          {gnbMenus.map(menu => (<span key={menu} className="cursor-pointer hover:text-blue-600 transition-colors">{menu}</span>))}
         </div>
-
         <div className="flex items-center gap-5 text-[13px] font-semibold text-gray-800">
            <div className="relative" ref={notiRef}>
               <div className={`relative cursor-pointer transition-colors p-1.5 rounded-md ${isNotiOpen ? 'bg-gray-100 text-blue-600' : 'text-gray-500 hover:text-blue-600 hover:bg-gray-50'}`} onClick={() => setIsNotiOpen(!isNotiOpen)}>
@@ -479,166 +479,98 @@ export default function MenuBar({ isTeamMode, toggleTeamMode, onOpenTeamModal, o
         </div>
       </div>
 
-      {/* 2. 에디터 하위 메뉴 */}
-      {!isRelocationPage && (
-          <div className="flex items-center justify-between px-4 h-9 bg-[#f8f9fa] border-t border-gray-100 relative" ref={menuRef}>
-            <div className="flex items-center gap-1 text-[13px] text-gray-700">
-                {subMenus.map(menu => (
-                    <div key={menu.name} className="relative">
-                        <div 
-                            className={`cursor-pointer px-3 py-1 rounded transition-colors ${activeMenu === menu.name ? 'bg-gray-200 font-medium' : 'hover:bg-gray-200'}`} 
-                            onClick={() => setActiveMenu(activeMenu === menu.name ? null : menu.name)}
-                        >
-                            {menu.name}
+      <div className="flex items-center justify-between px-4 h-9 bg-[#f8f9fa] border-t border-gray-100 relative" ref={menuRef}>
+        <div className="flex items-center gap-1 text-[13px] text-gray-700">
+             {subMenus.map(menu => (
+                 <div key={menu.name} className="relative">
+                     <div 
+                         className={`cursor-pointer px-3 py-1 rounded transition-colors ${activeMenu === menu.name ? 'bg-gray-200 font-medium' : 'hover:bg-gray-200'}`} 
+                         onClick={() => setActiveMenu(activeMenu === menu.name ? null : menu.name)}
+                     >
+                         {menu.name}
+                     </div>
+                     
+                     {activeMenu === menu.name && (
+                         <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 shadow-[0_4px_16px_rgba(0,0,0,0.1)] rounded-md py-1.5 z-[9999]">
+                             {menu.items.map((item, idx) => (
+                                 <div 
+                                     key={idx} 
+                                     onClick={() => handleMenuItemClick(menu.name, item.label)} 
+                                     className="px-5 py-1.5 hover:bg-blue-50 hover:text-blue-600 cursor-pointer text-[13px] text-gray-700 transition-colors flex justify-between items-center"
+                                 >
+                                     <span>{item.label}</span>
+                                     {item.shortcut && <span className="text-[11px] text-gray-400">{item.shortcut}</span>}
+                                 </div>
+                             ))}
+                         </div>
+                     )}
+                 </div>
+             ))}
+        </div>
+
+        <div className="flex items-center gap-3">
+            <button onClick={() => dispatch(openProjectModal())} className="flex items-center gap-1 text-[12px] font-bold bg-[#333] text-white px-2.5 py-1 rounded hover:bg-black transition-colors"><VscAdd size={14} /> 새 프로젝트</button>
+            <div className="w-[1px] h-4 bg-gray-300 mx-1"></div>
+            
+            <div className="relative" ref={branchRef}>
+                <div 
+                    className={`flex items-center gap-1.5 text-[11px] font-mono border px-2 py-0.5 rounded cursor-pointer transition-colors shadow-sm ${isBranchOpen ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`} 
+                    onClick={() => {
+                        if(!activeProject) return alert("좌측 탐색기에서 시작 프로젝트를 먼저 설정해주세요!");
+                        setIsBranchOpen(!isBranchOpen);
+                    }}
+                >
+                    <VscSourceControl size={12} className="text-blue-600" />
+                    <span className="font-semibold">{currentBranch}</span>
+                    <VscChevronDown size={12} className="text-gray-400" />
+                </div>
+
+                {isBranchOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-300 shadow-lg rounded-md py-2 z-[9999]">
+                        <div className="px-3 pb-2 border-b border-gray-100 mb-2">
+                            <p className="text-xs font-bold text-gray-700 mb-1">Git Repository</p>
+                            <p className="text-[10px] text-gray-500 truncate">Project: {activeProject}</p>
                         </div>
                         
-                        {activeMenu === menu.name && (
-                            <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 shadow-[0_4px_16px_rgba(0,0,0,0.1)] rounded-md py-1.5 z-[9999]">
-                                {menu.items.map((item, idx) => (
-                                    <div 
-                                        key={idx} 
-                                        onClick={() => handleMenuItemClick(menu.name, item.label)} 
-                                        className="px-5 py-1.5 hover:bg-blue-50 hover:text-blue-600 cursor-pointer text-[13px] text-gray-700 transition-colors flex justify-between items-center"
-                                    >
-                                        <span>{item.label}</span>
-                                        {item.shortcut && <span className="text-[11px] text-gray-400">{item.shortcut}</span>}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ))}
-                
-                {/* 💡 [팀 메뉴 버튼 추가] isTeamMode가 true일 때만 렌더링됩니다 */}
-                {isTeamMode && (
-                    <div className="flex items-center gap-1.5 ml-3 border-l border-gray-300 pl-3 animate-fade-in">
-                        <div onClick={onOpenTeamModal} className="cursor-pointer px-3 py-1 rounded-md font-extrabold text-blue-600 bg-blue-50/80 hover:bg-blue-100 hover:shadow-sm active:scale-95 transition-all border border-blue-100 flex items-center gap-1.5">
-                            TEAM
+                        <div className="max-h-40 overflow-y-auto">
+                            {branches.map(branch => (
+                                <div 
+                                    key={branch} 
+                                    onClick={() => handleSelectBranch(branch)}
+                                    className={`flex items-center justify-between px-4 py-1.5 cursor-pointer text-xs ${branch === currentBranch ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-700 hover:bg-gray-100'}`}
+                                >
+                                    <span>{branch}</span>
+                                    {branch === currentBranch && <span className="text-[10px]">Active</span>}
+                                </div>
+                            ))}
                         </div>
-                        <div onClick={onOpenVoiceChatModal} className="cursor-pointer flex items-center gap-1.5 px-3 py-1 rounded-md font-extrabold text-green-600 bg-green-50/80 hover:bg-green-100 hover:shadow-sm active:scale-95 transition-all border border-green-100">
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                            </span>
-                            VoiceChat
+
+                        <div className="px-3 pt-3 border-t border-gray-100 mt-2">
+                            <p className="text-[10px] font-semibold text-gray-500 mb-1">Create New Branch</p>
+                            <div className="flex items-center gap-1">
+                                <input 
+                                    type="text" 
+                                    placeholder="new-branch-name" 
+                                    value={newBranchName}
+                                    onChange={(e) => setNewBranchName(e.target.value)}
+                                    className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500"
+                                />
+                                <button 
+                                    onClick={handleCreateBranch}
+                                    disabled={isCreatingBranch || !newBranchName.trim()}
+                                    className="bg-gray-800 text-white p-1 rounded hover:bg-black disabled:opacity-50"
+                                >
+                                    {isCreatingBranch ? <VscRefresh className="animate-spin" size={14} /> : <VscAdd size={14}/>}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
             </div>
-
-            <div className="flex items-center gap-3">
-                <button onClick={() => dispatch(openProjectModal())} className="flex items-center gap-1 text-[12px] font-bold bg-[#333] text-white px-2.5 py-1 rounded hover:bg-black transition-colors"><VscAdd size={14} /> 새 프로젝트</button>
-                <div className="w-[1px] h-4 bg-gray-300 mx-1"></div>
-                
-                <div className="relative" ref={branchRef}>
-                    <div 
-                        className={`flex items-center gap-1.5 text-[11px] font-mono border px-2 py-0.5 rounded cursor-pointer transition-colors shadow-sm ${isBranchOpen ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`} 
-                        onClick={() => {
-                            if(!activeProject) return alert("좌측 탐색기에서 시작 프로젝트를 먼저 설정해주세요!");
-                            setIsBranchOpen(!isBranchOpen);
-                        }}
-                    >
-                        <VscSourceControl size={12} className="text-blue-600" />
-                        <span className="font-semibold">{currentBranch}</span>
-                        <VscChevronDown size={12} className="text-gray-400" />
-                    </div>
-
-                    {isBranchOpen && (
-                        <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-300 shadow-lg rounded-md py-2 z-[9999]">
-                            <div className="px-3 pb-2 border-b border-gray-100 mb-2">
-                                <p className="text-xs font-bold text-gray-700 mb-1">Git Repository</p>
-                                <p className="text-[10px] text-gray-500 truncate">Project: {activeProject}</p>
-                            </div>
-                            
-                            <div className="max-h-40 overflow-y-auto">
-                                {branches.map(branch => (
-                                    <div 
-                                        key={branch} 
-                                        onClick={() => handleSelectBranch(branch)}
-                                        className={`flex items-center justify-between px-4 py-1.5 cursor-pointer text-xs ${branch === currentBranch ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-700 hover:bg-gray-100'}`}
-                                    >
-                                        <span>{branch}</span>
-                                        {branch === currentBranch && <span className="text-[10px]">Active</span>}
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="px-3 pt-3 border-t border-gray-100 mt-2">
-                                <p className="text-[10px] font-semibold text-gray-500 mb-1">Create New Branch</p>
-                                <div className="flex items-center gap-1">
-                                    <input 
-                                        type="text" 
-                                        placeholder="new-branch-name" 
-                                        value={newBranchName}
-                                        onChange={(e) => setNewBranchName(e.target.value)}
-                                        className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500"
-                                    />
-                                    <button 
-                                        onClick={handleCreateBranch}
-                                        disabled={isCreatingBranch || !newBranchName.trim()}
-                                        className="bg-gray-800 text-white p-1 rounded hover:bg-black disabled:opacity-50"
-                                    >
-                                        {isCreatingBranch ? <VscRefresh className="animate-spin" size={14} /> : <VscAdd size={14}/>}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-                
-                {/* ========================================================= */}
-                {/* 💡 [디테일 추가] 멤버 현황판 열기 & 툴팁 지원 & 모드 토글 */}
-                {/* ========================================================= */}
-                <div className="flex items-center ml-2">
-                    {isTeamMode ? (
-                        <>
-                            {/* 1. 아바타 그룹 (클릭 시 팀 모달 오픈) */}
-                            <div 
-                                onClick={onOpenTeamModal} 
-                                className="flex items-center -space-x-1.5 animate-fade-in cursor-pointer hover:opacity-90 transition-opacity"
-                            >
-                                {[
-                                    { name: '노', fullName: '노민주 (나)', color: 'bg-blue-500' }, 
-                                    { name: '김', fullName: '김철수', color: 'bg-teal-500' }, 
-                                    { name: '이', fullName: '이영희', color: 'bg-indigo-500' }
-                                ].map((u, i) => (
-                                    <div 
-                                        key={i} 
-                                        className="relative hover:-translate-y-1 transition-transform duration-200" 
-                                        style={{ zIndex: 30 - i }}
-                                        title={`${u.fullName} (온라인)`} // 💡 브라우저 기본 툴팁 기능 활용
-                                    >
-                                        <div className={`w-7 h-7 ${u.color} rounded-full border-2 border-[#f8f9fa] text-white text-[11px] flex items-center justify-center font-bold shadow-sm`}>
-                                            {u.name}
-                                        </div>
-                                        <div className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 border border-white rounded-full"></div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* 2. TEAM 뱃지 (클릭 시 솔로 모드로 복귀하는 토글 기능) */}
-                            <span 
-                                onClick={toggleTeamMode}
-                                className="text-[11px] font-black tracking-wide bg-gradient-to-r from-green-500 to-emerald-500 text-white border border-green-600 px-3.5 py-1 rounded-full shadow-md cursor-pointer hover:scale-105 active:scale-95 transition-transform select-none ml-2.5"
-                                title="클릭하여 Solo 모드로 전환"
-                            >
-                                TEAM
-                            </span>
-                        </>
-                    ) : (
-                        <span 
-                            onClick={toggleTeamMode}
-                            className="text-[11px] font-black tracking-wide bg-blue-100 text-blue-700 border border-blue-200 px-3.5 py-1 rounded-full shadow-sm cursor-pointer hover:bg-blue-200 active:scale-95 transition-all animate-fade-in select-none ml-2"
-                            title="클릭하여 Team 모드 활성화"
-                        >
-                            SOLO
-                        </span>
-                    )}
-                </div>
-                {/* ========================================================= */}
-            </div>
-          </div>
-      )}
+            
+            <span className="text-[11px] font-bold bg-blue-100 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-full shadow-sm select-none">Solo</span>
+        </div>
+      </div>
     </div>
   );
 }
