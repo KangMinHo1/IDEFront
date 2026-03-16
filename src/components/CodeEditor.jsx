@@ -234,9 +234,9 @@ export default function CodeEditor() {
                       if (currentConflict && currentConflict.mid) {
                           currentConflict.end = i + 1;
                           const range = new monaco.Range(currentConflict.start, 1, currentConflict.start, 1);
-                          lenses.push({ range, command: { id: 'accept-current', title: '현재 변경 사항 수락', arguments: [model.uri, currentConflict] }});
-                          lenses.push({ range, command: { id: 'accept-incoming', title: '수신 변경 사항 수락', arguments: [model.uri, currentConflict] }});
-                          lenses.push({ range, command: { id: 'accept-both', title: '모두 수락', arguments: [model.uri, currentConflict] }});
+                          lenses.push({ range, command: { id: 'accept-current', title: '✓ 현재 변경 사항 수락', arguments: [model.uri, currentConflict] }});
+                          lenses.push({ range, command: { id: 'accept-incoming', title: '✓ 수신 변경 사항 수락', arguments: [model.uri, currentConflict] }});
+                          lenses.push({ range, command: { id: 'accept-both', title: '✓ 모두 수락', arguments: [model.uri, currentConflict] }});
                           currentConflict = null;
                       }
                   }
@@ -290,6 +290,23 @@ export default function CodeEditor() {
               .conflict-current-margin { border-left: 4px solid #3cb371 !important; }
               .conflict-incoming-bg { background-color: rgba(65, 105, 225, 0.2) !important; }
               .conflict-incoming-margin { border-left: 4px solid #4169e1 !important; }
+              
+              /* 💡 [핵심 추가] 충돌 수락 CodeLens 버튼을 눈에 띄는 굵은 파란색 버튼으로 변경! */
+              .monaco-editor .codelens-decoration a {
+                  color: #2563eb !important;
+                  font-weight: 800 !important;
+                  font-size: 13px !important;
+                  background-color: #eff6ff !important;
+                  padding: 4px 8px !important;
+                  border-radius: 6px !important;
+                  border: 1px solid #bfdbfe !important;
+                  transition: all 0.2s;
+              }
+              .monaco-editor .codelens-decoration a:hover {
+                  background-color: #dbeafe !important;
+                  color: #1d4ed8 !important;
+                  border-color: #93c5fd !important;
+              }
           `;
           document.head.appendChild(style);
       }
@@ -350,8 +367,6 @@ export default function CodeEditor() {
     return () => disposable.dispose(); 
   }, [breakpoints, debugLine, activeFileId, monaco, fileContents]);
 
-
-  // 💡 [핵심 추가] 고스트 텍스트(인라인 자동완성) 발동 로직 - (진행상황 콘솔 출력 모드!)
   useEffect(() => {
       if (!monaco) return;
 
@@ -377,16 +392,8 @@ export default function CodeEditor() {
                       }
 
                       try {
-                          // 🚨 [탐정 모드 1] 프론트에서 요청을 보낼 때 로그 출력!
-                          console.log("👻 [고스트 텍스트] 1.5초 대기 완료! 백엔드로 요청 보냄...");
-                          
                           const suggestion = await fetchAiAutocompleteApi({ prefix, suffix });
-                          
-                          // 🚨 [탐정 모드 2] 백엔드에서 받은 실제 답변 출력!
-                          console.log("👻 [고스트 텍스트] 백엔드 응답 도착:", suggestion);
-                          
                           if (suggestion && suggestion.trim() !== '') {
-                              console.log("👻 [고스트 텍스트] 에디터에 회색 글씨를 띄웁니다!");
                               resolve({
                                   items: [{
                                       insertText: suggestion,
@@ -394,12 +401,9 @@ export default function CodeEditor() {
                                   }]
                               });
                           } else {
-                              console.log("👻 [고스트 텍스트] AI가 빈 칸을 줘서 띄울 게 없습니다.");
                               resolve({ items: [] });
                           }
                       } catch (e) {
-                          // 🚨 [탐정 모드 3] 에러 발생 시 원인 출력!
-                          console.error("👻 [고스트 텍스트] 통신 에러! api.js 를 확인하세요:", e);
                           resolve({ items: [] });
                       }
                   }, 1500); 
@@ -412,7 +416,6 @@ export default function CodeEditor() {
 
       return () => provider.dispose();
   }, [monaco]);
-
 
   if (!activeFileId) return <div className="h-full w-full bg-[#fdfdfd] flex items-center justify-center text-gray-400 text-sm">파일을 선택하여 편집을 시작하세요</div>;
 
@@ -473,56 +476,58 @@ export default function CodeEditor() {
         )}
 
         <div className="flex-1 relative">
-            <div className={`absolute inset-0 transition-opacity duration-200 ${isDiffMode ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none z-0'}`}>
-                <DiffEditor
-                    height="100%"
-                    theme="light"
-                    language={getLanguage(activeFileId)}
-                    original={aiSuggestion?.originalCode || '// 코드 분석 중...'}
-                    modified={aiSuggestion?.suggestedCode || '// 코드 분석 중...'}
-                    options={{
-                        renderSideBySide: true, 
-                        readOnly: false,
-                        fontSize: fontSize,
-                        fontFamily: "'D2Coding', 'Consolas', monospace",
-                        minimap: { enabled: editorSettings.minimap },
-                        originalEditable: false,
-                    }}
-                />
-            </div>
-            
-            <div className={`absolute inset-0 transition-opacity duration-200 ${!isDiffMode ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none z-0'}`}>
-                <Editor
-                    height="100%"
-                    theme="light" 
-                    path={activeFileId}
-                    language={getLanguage(activeFileId)}
-                    value={fileContents[activeFileId] || ''}
-                    onChange={handleEditorChange}
-                    onMount={handleEditorDidMount}
-                    options={{
-                        fontSize: fontSize,
-                        fontFamily: "'D2Coding', 'Consolas', monospace",
-                        minimap: { enabled: editorSettings.minimap },
-                        scrollBeyondLastLine: false,
-                        automaticLayout: true,
-                        glyphMargin: true,
-                        renderLineHighlight: "all",
-                        lineNumbersMinChars: 4,
-                        padding: { top: 10 },
-                        quickSuggestions: editorSettings.autoComplete,
-                        suggestOnTriggerCharacters: editorSettings.autoComplete,
-                        snippetSuggestions: editorSettings.autoComplete ? "inline" : "none",
-                        wordBasedSuggestions: editorSettings.autoComplete,
-                        formatOnType: editorSettings.formatOnType,
-                        formatOnPaste: editorSettings.formatOnType,
-                        links: true,
-                        matchBrackets: "always",
-                        autoClosingBrackets: "always",
-                        inlineSuggest: { enabled: true } 
-                    }}
-                />
-            </div>
+            {isDiffMode ? (
+                <div className="absolute inset-0 z-10 bg-white">
+                    <DiffEditor
+                        height="100%"
+                        theme="light"
+                        language={getLanguage(activeFileId)}
+                        original={aiSuggestion?.originalCode || '// 코드 분석 중...'}
+                        modified={aiSuggestion?.suggestedCode || '// 코드 분석 중...'}
+                        options={{
+                            renderSideBySide: true, 
+                            readOnly: false,
+                            fontSize: fontSize,
+                            fontFamily: "'D2Coding', 'Consolas', monospace",
+                            minimap: { enabled: editorSettings.minimap },
+                            originalEditable: false,
+                        }}
+                    />
+                </div>
+            ) : (
+                <div className="absolute inset-0 z-10 bg-white">
+                    <Editor
+                        height="100%"
+                        theme="light" 
+                        path={activeFileId}
+                        language={getLanguage(activeFileId)}
+                        value={fileContents[activeFileId] || ''}
+                        onChange={handleEditorChange}
+                        onMount={handleEditorDidMount}
+                        options={{
+                            fontSize: fontSize,
+                            fontFamily: "'D2Coding', 'Consolas', monospace",
+                            minimap: { enabled: editorSettings.minimap },
+                            scrollBeyondLastLine: false,
+                            automaticLayout: true,
+                            glyphMargin: true,
+                            renderLineHighlight: "all",
+                            lineNumbersMinChars: 4,
+                            padding: { top: 10 },
+                            quickSuggestions: editorSettings.autoComplete,
+                            suggestOnTriggerCharacters: editorSettings.autoComplete,
+                            snippetSuggestions: editorSettings.autoComplete ? "inline" : "none",
+                            wordBasedSuggestions: editorSettings.autoComplete,
+                            formatOnType: editorSettings.formatOnType,
+                            formatOnPaste: editorSettings.formatOnType,
+                            links: true,
+                            matchBrackets: "always",
+                            autoClosingBrackets: "always",
+                            inlineSuggest: { enabled: true } 
+                        }}
+                    />
+                </div>
+            )}
         </div>
     </div>
   );

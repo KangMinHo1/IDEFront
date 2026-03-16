@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams } from 'react-router-dom';
 
@@ -13,119 +13,90 @@ import AgentPanel from './AgentPanel';
 import CreateProjectModal from './CreateProjectModal'; 
 import CommandPalette from './CommandPalette';
 import GitDashboard from './GitDashboard'; 
-import CodeMap from './CodeMap';
+import CodeMap from './CodeMap'; 
 
 import { fetchWorkspaceProjectsApi } from '../utils/api'; 
 import { setWorkspaceTree, setWorkspaceId, setProjectList } from '../store/slices/fileSystemSlice'; 
-import { setCodeMapMode } from '../store/slices/uiSlice'; 
+import { VscClose, VscWand } from 'react-icons/vsc';
 
-const DocsPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500">Docs Panel</div>; 
-const ApiTestPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500">API Test Panel</div>;
-const MyPagePanel = () => <div className="flex-1 flex items-center justify-center text-gray-500">My Page Panel</div>;
+const DocsPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">Docs Panel</div>; 
+const ApiTestPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">API Test Panel</div>;
+const MyPagePanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">My Page Panel</div>;
 
 export default function IdeMain() {
   const { id } = useParams();
   const dispatch = useDispatch();
-  
-  const { isSidebarVisible, isTerminalVisible, isAgentVisible, activeActivity, isDebugMode, codeMapMode } = useSelector(state => state.ui);
-  const { openFiles, activeFileId } = useSelector(state => state.fileSystem);
 
-  // 💡 가상 식별자로 변경 체크
-  const isCodeMapTabOpen = openFiles.some(f => f.id === 'virtual:codemap');
-  
-  useEffect(() => {
-      if (!isCodeMapTabOpen && codeMapMode !== null) {
-          dispatch(setCodeMapMode(null));
-      }
-  }, [isCodeMapTabOpen, codeMapMode, dispatch]);
+  const { activeActivity, isTerminalVisible, isSidebarVisible, isAgentVisible, isDebugMode, codeMapMode } = useSelector(state => state.ui);
+  const { workspaceId, activeProject } = useSelector(state => state.fileSystem);
+  const isCodeMapSplit = codeMapMode === 'split';
 
   useEffect(() => {
-      if (id) { dispatch(setWorkspaceId(id)); loadWorkspaceData(id); }
+    if (id) {
+      dispatch(setWorkspaceId(id));
+      fetchWorkspaceProjectsApi(id).then(root => {
+        dispatch(setWorkspaceTree(root));
+        if (root.children) dispatch(setProjectList(root.children));
+      }).catch(console.error);
+    }
   }, [id, dispatch]);
 
-  const loadWorkspaceData = async (workspaceId) => {
-      try {
-          const projectsRoot = await fetchWorkspaceProjectsApi(workspaceId);
-          dispatch(setProjectList(projectsRoot.children || []));
-          dispatch(setWorkspaceTree(projectsRoot));
-      } catch (e) { console.error("Failed to load workspace data:", e); }
-  };
-
   const renderMainContent = () => {
-      switch (activeActivity) {
-          case 'docs': return <DocsPanel />;
-          case 'api-test': return <ApiTestPanel />;
-          case 'mypage': return <MyPagePanel />;
-          case 'git': return <GitDashboard />;
-              
-          case 'editor':
-          default:
-              return (
+    switch (activeActivity) {
+        case 'docs': return <DocsPanel />;
+        case 'api-test': return <ApiTestPanel />;
+        case 'mypage': return <MyPagePanel />;
+        case 'git': return <GitDashboard />;
+        case 'editor':
+        default:
+            return (
                 <div className="flex-1 flex overflow-hidden">
+                    {/* 좌측 사이드바 */}
                     {isSidebarVisible && (
-                        <div className="w-64 shrink-0 border-r border-gray-200 bg-[#f8f9fa]">
-                            <Sidebar />
+                        <div className="w-[260px] shrink-0 border-r border-gray-200 flex flex-col bg-[#f8f9fa]">
+                           <Sidebar />
                         </div>
                     )}
                     
-                    <div className="flex-1 flex flex-col min-w-0 bg-white relative">
+                    {/* 중앙 에디터 영역 */}
+                    <div className="flex-1 flex flex-col min-w-0 bg-white">
                         <FileTabs />
-                        
-                        <div className="flex-1 relative min-h-0 flex"> 
-                            {/* 💡 virtual:codemap ID를 기준으로 조건부 렌더링 */}
-                            {activeFileId !== 'virtual:codemap' ? (
-                                <div className="w-full h-full relative">
-                                    {activeFileId ? <CodeEditor /> : <div className="flex-1 flex items-center justify-center text-gray-400">파일을 선택해주세요.</div>}
+                        <div className="flex-1 flex relative overflow-hidden">
+                            <div className="flex-1 flex flex-col min-w-0">
+                                <CodeEditor />
+                            </div>
+                            {isCodeMapSplit && (
+                                <div className="w-1/2 border-l border-gray-200 flex flex-col z-10">
+                                    <CodeMap />
                                 </div>
-                            ) : (
-                                codeMapMode === 'split' ? (
-                                    <>
-                                        <div className="w-1/2 h-full border-r border-gray-300 relative">
-                                            <CodeEditor />
-                                        </div>
-                                        <div className="w-1/2 h-full bg-[#fdfdfd] relative">
-                                            <CodeMap />
-                                        </div>
-                                    </>
-                                ) : (
-                                    <div className="w-full h-full relative">
-                                        <CodeMap />
-                                    </div>
-                                )
                             )}
                         </div>
-
                         {isTerminalVisible && (
-                            <div className="h-[250px] shrink-0 border-t border-gray-200 shadow-[0_-1px_3px_rgba(0,0,0,0.05)] z-10">
+                            <div className="h-[250px] border-t border-gray-200 bg-white shrink-0">
                                 <BottomPanel />
                             </div>
                         )}
                     </div>
 
-                    {isDebugMode ? (
-                        <div className="w-[300px] shrink-0 border-l border-gray-200 z-20 bg-[#252526]">
-                            <DebugPanel />
+                    {/* 우측 패널 (비율 고정: w-[320px]) */}
+                    {(isAgentVisible || isDebugMode) && (
+                        <div className="w-[320px] shrink-0 border-l border-gray-200 flex flex-col bg-[#f8f9fa] z-20">
+                            {isDebugMode ? <DebugPanel /> : <AgentPanel />}
                         </div>
-                    ) : (
-                        isAgentVisible && (
-                            <div className="w-[300px] shrink-0 border-l border-gray-200 bg-[#fbfbfc] shadow-[-1px_0_3px_rgba(0,0,0,0.02)] z-20">
-                                <AgentPanel />
-                            </div>
-                        )
                     )}
                 </div>
-              );
-      }
+            );
+    }
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-white text-[#333] overflow-hidden font-sans">
+    <div className="h-screen w-screen flex flex-col bg-white text-[#333] overflow-hidden font-sans relative">
       <CommandPalette />
       <CreateProjectModal /> 
-      <MenuBar />
+      <MenuBar mode="personal" />
       <div className="flex-1 flex overflow-hidden">
-         <ActivityBar />
-         {renderMainContent()}
+          <ActivityBar />
+          {renderMainContent()}
       </div>
     </div>
   );

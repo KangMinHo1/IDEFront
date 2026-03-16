@@ -12,6 +12,7 @@ export default function ActivityBar() {
   const navigate = useNavigate();
   const { activeActivity } = useSelector(state => state.ui);
 
+  // 💡 자료재배치(rearrange) 삭제됨
   const topItems = [
       { id: 'editor', icon: <VscFiles size={24} />, label: '에디터' },
       { id: 'docs', icon: <VscBook size={24} />, label: '문서' },
@@ -25,9 +26,12 @@ export default function ActivityBar() {
       }
   };
 
+  const handleActivityClick = (id) => {
+      dispatch(setActiveActivity(id));
+  };
+
   return (
     <div className="w-12 bg-[#f8f8f8] border-r border-gray-200 flex flex-col justify-between h-full z-30 shrink-0 shadow-sm">
-      {/* 상단 그룹 */}
       <div className="flex flex-col pt-2 gap-2">
           {topItems.map((item) => (
             <div 
@@ -35,15 +39,12 @@ export default function ActivityBar() {
                 className={`w-12 h-12 flex items-center justify-center cursor-pointer transition-all relative group
                     ${activeActivity === item.id ? 'text-[#333]' : 'text-gray-400 hover:text-gray-600'}
                 `}
-                onClick={() => dispatch(setActiveActivity(item.id))}
+                onClick={() => handleActivityClick(item.id)}
             >
-                {/* 활성 상태 표시 바 (왼쪽) */}
                 {activeActivity === item.id && (
                     <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#333] rounded-r-full" />
                 )}
                 {item.icon}
-                
-                {/* 툴팁 */}
                 <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 bg-black text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50">
                     {item.label}
                 </div>
@@ -51,7 +52,6 @@ export default function ActivityBar() {
           ))}
       </div>
 
-      {/* 하단 그룹 */}
       <div className="flex flex-col pb-2 gap-2">
         <div 
             className={`w-12 h-12 flex items-center justify-center cursor-pointer transition-all relative group

@@ -6,55 +6,8 @@ import { VscSourceControl, VscRepo, VscRepoForked, VscRecord, VscCloudDownload, 
 import { setActiveProject, setActiveBranch, closeAllFiles } from '../store/slices/fileSystemSlice';
 import { updateProjectGitInfo } from '../store/slices/fileSystemSlice'; 
 import { fetchGitStatusApi, stageFilesApi, unstageFilesApi, commitChangesApi, fetchBranchListApi, pushToRemoteApi, pullFromRemoteApi, fetchGitHistoryApi, resetCommitApi, checkoutCommitApi, mergeCommitApi, updateGitUrlApi, abortMergeApi } from '../utils/api'; 
-
-// 💡 [핵심 마법] 백엔드가 준 텍스트 그래프(* | / \)를 분석해서 색깔과 연결선을 그려주는 렌더러!
-const renderGraph = (graphStr) => {
-    if (!graphStr) return null;
-    
-    // VS Code / Sourcetree 스타일의 브랜치 라인별 색상 팔레트
-    const colors = ['#3b82f6', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#14b8a6', '#ef4444'];
-    
-    return graphStr.split('').map((char, idx) => {
-        // 공백 처리
-        if (char === ' ') return <span key={idx} className="inline-block h-full shrink-0" style={{ width: '12px' }}></span>;
-        
-        // 💡 1. 가로 위치(Index)를 기반으로 브랜치 색상 배정! (갈라지면 다른 색이 됨)
-        const colorIndex = Math.floor(idx / 2) % colors.length;
-        const color = colors[colorIndex];
-        
-        // 💡 2. Fast-Forward 연결선 해결! (모든 점과 선 뒤에 100% 높이의 세로선을 깔아버림)
-        if (char === '*') {
-            return (
-                <span key={idx} className="relative h-full inline-flex items-center justify-center shrink-0" style={{ width: '12px', color }}>
-                    {/* 상/하를 완벽하게 이어주는 뼈대 연결선 */}
-                    <span className="absolute w-[2px] bg-current h-[200%] z-0"></span>
-                    {/* 진짜 IDE처럼 예쁜 가운데 뚫린 동그라미 커밋 점 */}
-                    <div className="relative z-10 w-2.5 h-2.5 rounded-full border-[2.5px] border-current bg-white"></div>
-                </span>
-            );
-        }
-        
-        if (char === '|') {
-            return (
-                <span key={idx} className="relative h-full inline-flex items-center justify-center shrink-0" style={{ width: '12px', color }}>
-                    <span className="absolute w-[2px] bg-current h-[200%] z-0"></span>
-                </span>
-            );
-        }
-
-        // 사선(/, \) 디자인 다듬기
-        let displayChar = char;
-        let transform = 'scale(1)';
-        if (char === '/') { displayChar = '╱'; transform = 'scale(1.2)'; }
-        if (char === '\\') { displayChar = '╲'; transform = 'scale(1.2)'; }
-
-        return (
-            <span key={idx} className="relative h-full inline-flex items-center justify-center shrink-0" style={{ width: '12px', color, transform, fontWeight: 'bold' }}>
-                {displayChar}
-            </span>
-        );
-    });
-};
+// 💡 [핵심] 외부에서 분리한 정교한 그래프 렌더러를 불러옵니다. (이제 아래에 중복된 함수가 없습니다!)
+import { renderGraph } from '../utils/gitGraphHelper';
 
 export default function GitDashboard() {
     const dispatch = useDispatch();
@@ -369,7 +322,7 @@ export default function GitDashboard() {
                                             onContextMenu={(e) => handleRightClick(e, log)}
                                             className={`flex px-4 hover:bg-blue-50 transition-colors cursor-pointer items-center text-[13px] group h-6`}
                                         >
-                                            {/* 💡 [핵심 적용] 기존의 단순 replace 대신 renderGraph 함수를 통과시킵니다! */}
+                                            {/* 💡 [수정됨] renderGraph 함수 적용! */}
                                             <div className="w-24 shrink-0 h-full flex items-center justify-start pl-2 font-mono select-none overflow-visible">
                                                 {renderGraph(log.graph)}
                                             </div>

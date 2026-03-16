@@ -12,6 +12,9 @@ const initialState = {
   expandedFolders: [],
   activeGitView: 'status', 
   
+  // 💡 [추가] 자료재배치(가상 탐색기)용 상태
+  virtualTree: null, 
+  
   // 💡 [추가] AI 어시스트용 상태 공간 (주문서와 영수증을 보관할 서랍)
   aiSuggestion: {
       originalCode: null,   // 수락하기 전의 원래 코드
@@ -125,6 +128,16 @@ const fileSystemSlice = createSlice({
     },
 
     // =====================================================================
+    // 💡 [추가] 자료재배치용 Reducer 액션 함수
+    // =====================================================================
+    setVirtualTree: (state, action) => {
+        state.virtualTree = action.payload;
+    },
+    clearVirtualTree: (state) => {
+        state.virtualTree = null;
+    },
+
+    // =====================================================================
     // 💡 [추가] AI 어시스트용 Reducer 액션 함수들 (상태 조작)
     // =====================================================================
     
@@ -155,7 +168,8 @@ export const {
     setWorkspaceTree, updateProjectGitInfo, setActiveFile, closeFile, 
     closeFilesByPath, closeAllFiles, updateFileContent, toggleFolder, mergeProjectFiles, openFile,
     setActiveGitView, openCodeMapTab,
-    setAiSuggestion, clearAiSuggestion // 💡 내보내기 추가!
+    setVirtualTree, clearVirtualTree, // 💡 자료재배치용 함수 내보내기 완벽 적용!
+    setAiSuggestion, clearAiSuggestion 
 } = fileSystemSlice.actions;
 
 export default fileSystemSlice.reducer;
