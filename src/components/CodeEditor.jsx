@@ -291,7 +291,6 @@ export default function CodeEditor() {
               .conflict-incoming-bg { background-color: rgba(65, 105, 225, 0.2) !important; }
               .conflict-incoming-margin { border-left: 4px solid #4169e1 !important; }
               
-              /* 💡 [핵심 추가] 충돌 수락 CodeLens 버튼을 눈에 띄는 굵은 파란색 버튼으로 변경! */
               .monaco-editor .codelens-decoration a {
                   color: #2563eb !important;
                   font-weight: 800 !important;
@@ -417,13 +416,23 @@ export default function CodeEditor() {
       return () => provider.dispose();
   }, [monaco]);
 
+  // 💡 [핵심 추가 1] 선택된 탭이 'Architecture Map'일 경우 모나코 에디터 렌더링을 차단합니다.
+  const isMapTab = activeFileId === 'Architecture Map' || activeFileId === 'CodeMap' || activeFileId?.includes('codemap');
+  
   if (!activeFileId) return <div className="h-full w-full bg-[#fdfdfd] flex items-center justify-center text-gray-400 text-sm">파일을 선택하여 편집을 시작하세요</div>;
+
+  if (isMapTab) {
+      return (
+          <div className="h-full w-full bg-[#fdfdfd] flex items-center justify-center text-blue-500 font-bold">
+              아키텍처 맵을 불러오는 중입니다...
+          </div>
+      );
+  }
 
   const isDiffMode = aiSuggestion?.isDiffMode && aiSuggestion?.targetPath === activeFileId;
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-white flex flex-col">
-        
         {isDiffMode && (
             <div className="bg-indigo-50/90 border-b border-indigo-200 flex items-center justify-between p-3 shrink-0 shadow-sm z-10 backdrop-blur-sm min-h-[50px]">
                 <div className="flex items-start gap-2 flex-1 min-w-0 mr-4">

@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkspaceWizardStore } from '../../store/workspaceWizardStore';
-import { createWorkspaceApi, createProjectInWorkspaceApi } from '../../utils/api';
-import { useAuth } from '../../utils/AuthContext'; // 💡 AuthContext 가져오기
+import { createWorkspaceApi, createProjectInWorkspaceApi, inviteWorkspaceMemberApi } from '../../utils/api';
+import { useAuth } from '../../utils/AuthContext';
 
 export default function Config() {
   const navigate = useNavigate();
-  const { user } = useAuth(); // 💡 현재 로그인한 유저 정보 가져오기
+  const { user } = useAuth(); 
   
   const { 
     wsName, wsPath, wsType, language, 
     projName, projDesc, gitRepo, 
+    invitedEmails, 
     setData, setStep, reset 
   } = useWorkspaceWizardStore();
   
@@ -21,10 +22,22 @@ export default function Config() {
     let targetId = `local-${Date.now()}`;
     
     try {
-      // 💡 [핵심] 이제 "user1"이라는 가짜 글자 대신 실제 user.id를 보냅니다!
-      const res = await createWorkspaceApi(wsName, wsPath, user.id);
+      // 💡 [버그 수정 1] 워크스페이스 타입을 정확하게 판별해서 API로 넘겨줍니다!
+      const finalType = wsType === 'team' ? 'TEAM' : 'PERSONAL';
+      const res = await createWorkspaceApi(wsName, wsPath, user.id, finalType);
+      
       targetId = res.workspaceId || res.uuid || res.id || targetId;
+      
+      // 2. 프로젝트 생성
       await createProjectInWorkspaceApi(targetId, projName || wsName, language, projDesc, gitRepo);
+
+      // 3. 팀 워크스페이스이고 초대할 이메일이 있다면 초대 발송
+      if (wsType === 'team' && invitedEmails.length > 0) {
+          const invitePromises = invitedEmails.map(email => inviteWorkspaceMemberApi(targetId, email));
+          await Promise.allSettled(invitePromises);
+          console.log(`📧 ${invitedEmails.length}명의 팀원에게 초대를 발송했습니다.`);
+      }
+
     } catch (e) {
       console.warn("API 미연결 또는 오류: 강제 진입 모드", e);
     } finally {

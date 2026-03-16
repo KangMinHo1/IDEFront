@@ -2,20 +2,22 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams } from 'react-router-dom';
 
-import MenuBar from './MenuBar';
-import ActivityBar from './ActivityBar';
-import Sidebar from './Sidebar';
-import CodeEditor from './CodeEditor';
-import BottomPanel from './BottomPanel';
-import FileTabs from './FileTabs';
-import DebugPanel from './DebugPanel';
-import AgentPanel from './AgentPanel';
-import CreateProjectModal from './CreateProjectModal'; 
-import CommandPalette from './CommandPalette';
-import GitDashboard from './GitDashboard'; 
-import CodeMap from './CodeMap';
+import MenuBar from '../components/MenuBar';
+import ActivityBar from '../components/ActivityBar';
+import Sidebar from '../components/Sidebar';
+import CodeEditor from '../components/CodeEditor';
+import BottomPanel from '../components/BottomPanel';
+import FileTabs from '../components/FileTabs';
+import DebugPanel from '../components/DebugPanel';
+import AgentPanel from '../components/AgentPanel';
+import CreateProjectModal from '../components/CreateProjectModal'; 
+import CommandPalette from '../components/CommandPalette';
+import GitDashboard from '../components/GitDashboard'; 
+import CodeMap from '../components/CodeMap';
 
-import { fetchWorkspaceProjectsApi } from '../utils/api'; 
+import { fetchWorkspaceProjectsApi, fetchChatHistoryApi, getUserProfileApi, getWorkspaceMembersApi } from '../utils/api'; 
+import { ChatSocket } from '../utils/chatSocket'; 
+import { useAuth } from '../utils/AuthContext';   
 import { setWorkspaceTree, setWorkspaceId, setProjectList } from '../store/slices/fileSystemSlice'; 
 import { VscSend } from 'react-icons/vsc';
 
@@ -23,34 +25,115 @@ const DocsPanel = () => <div className="flex-1 flex items-center justify-center 
 const ApiTestPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 font-bold">API Test Panel</div>;
 const MyPagePanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 font-bold">My Page Panel</div>;
 
-// 💡 팀 채팅이 가능하게 완벽히 구현된 UI 컴포넌트
-const CollaborationPanel = () => {
+const CollaborationPanel = ({ workspaceId }) => {
+    const { user } = useAuth();
     const [chatInput, setChatInput] = useState('');
-    const [messages, setMessages] = useState([
-        { sender: 'System', text: '팀 채팅방에 입장하셨습니다.', time: '10:00', isMe: false },
-        { sender: '이영희', text: '안녕하세요! App.jsx 부분 작업 시작할게요.', time: '10:02', isMe: false }
-    ]);
+    const [messages, setMessages] = useState([]);
+    
+    const [myProfile, setMyProfile] = useState(null); 
+    const [teamMembers, setTeamMembers] = useState([]); 
+    const [chatMode, setChatMode] = useState('ALL');    
+    
     const endRef = useRef(null);
 
     useEffect(() => {
         endRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+    }, [messages, chatMode]); 
+
+    useEffect(() => {
+        if (!workspaceId || !user || !user.id) return;
+
+        getUserProfileApi(user.id).then(setMyProfile).catch(console.error);
+        getWorkspaceMembersApi(workspaceId).then(setTeamMembers).catch(console.error);
+
+        fetchChatHistoryApi(workspaceId, user.id)
+            .then(history => {
+                const formatted = history.map(msg => ({
+                    id: msg.id,
+                    senderId: msg.senderId,
+                    receiverId: msg.receiverId, 
+                    sender: msg.senderName,
+                    text: msg.content,
+                    time: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    // 💡 [수정] 무조건 String으로 감싸서 완벽하게 비교
+                    isMe: String(msg.senderId) === String(user.id),
+                    type: msg.type
+                }));
+                setMessages(formatted);
+            })
+            .catch(err => console.error("이전 채팅 불러오기 실패:", err));
+
+        ChatSocket.connect(workspaceId, user.id, (newMessage) => {
+            setMessages(prev => {
+                if (prev.find(m => m.id === newMessage.id)) return prev;
+                
+                return [...prev, {
+                    id: newMessage.id,
+                    senderId: newMessage.senderId,
+                    receiverId: newMessage.receiverId, 
+                    sender: newMessage.senderName,
+                    text: newMessage.content,
+                    time: new Date(newMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    // 💡 [수정] 무조건 String으로 감싸서 완벽하게 비교
+                    isMe: String(newMessage.senderId) === String(user.id),
+                    type: newMessage.type
+                }];
+            });
+        });
+
+        return () => {
+            ChatSocket.disconnect();
+        };
+    }, [workspaceId, user]);
 
     const handleSend = () => {
-        if (!chatInput.trim()) return;
-        setMessages([...messages, { 
-            sender: '나', text: chatInput, time: new Date().toLocaleTimeString().slice(0,5), isMe: true 
-        }]);
+        if (!chatInput.trim() || !workspaceId || !user) return;
+        
+        const actualName = myProfile?.nickname || user.nickname || (user.email ? user.email.split('@')[0] : '팀원');
+        const receiver = chatMode === 'ALL' ? null : Number(chatMode); 
+
+        const messageData = {
+            workspaceId: workspaceId,
+            senderId: user.id,
+            senderName: actualName, 
+            receiverId: receiver, 
+            content: chatInput,
+            type: 'CHAT'
+        };
+
+        ChatSocket.sendMessage(messageData);
         setChatInput('');
     };
+
+    // 💡 [핵심 수정] 1 === "1" 에러가 발생하지 않도록 모든 ID를 String으로 변환해서 필터링!
+    const displayMessages = messages.filter(msg => {
+        if (chatMode === 'ALL') {
+            return msg.receiverId === null; 
+        } else {
+            const targetId = String(chatMode);
+            const myId = String(user.id);
+            const mSender = String(msg.senderId);
+            const mReceiver = String(msg.receiverId);
+            
+            // 내가 보냈거나, 내가 받은 메시지만 통과
+            return (mSender === myId && mReceiver === targetId) || 
+                   (mSender === targetId && mReceiver === myId);
+        }
+    });
 
     return (
       <div className="flex flex-col h-full bg-white font-sans">
           <div className="flex-1 overflow-y-auto p-4 bg-[#fbfbfc] space-y-4 custom-scrollbar">
-              {messages.map((msg, i) => (
-                  <div key={i} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'} animate-fade-in-up`}>
-                      <span className="text-[10px] text-gray-400 font-bold mb-1 px-1">{msg.sender}</span>
-                      <div className={`max-w-[85%] p-3 rounded-lg text-[13px] shadow-sm leading-relaxed whitespace-pre-wrap
+              {displayMessages.length === 0 && (
+                  <div className="text-center text-gray-400 text-xs font-bold py-10">
+                      {chatMode === 'ALL' ? '공용 채팅을 시작해보세요! 🎉' : '팀원과 1:1 귓속말을 시작해보세요! 💬'}
+                  </div>
+              )}
+              {displayMessages.map((msg, i) => (
+                  <div key={msg.id || i} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'} animate-fade-in-up`}>
+                      {!msg.isMe && <span className="text-[10px] text-gray-400 font-bold mb-1 px-1">{msg.sender}</span>}
+                      
+                      <div className={`max-w-[85%] p-3 rounded-lg text-[13px] shadow-sm leading-relaxed whitespace-pre-wrap break-words
                           ${msg.isMe ? 'bg-green-600 text-white rounded-tr-none' : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none'}`}>
                           {msg.text}
                       </div>
@@ -59,14 +142,31 @@ const CollaborationPanel = () => {
               ))}
               <div ref={endRef} />
           </div>
-          <div className="p-3 bg-white border-t border-gray-200 shrink-0">
+
+          <div className="p-3 bg-white border-t border-gray-200 shrink-0 flex flex-col gap-2.5">
+              <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-gray-500 whitespace-nowrap pl-1">수신:</span>
+                  <select 
+                      value={chatMode} 
+                      onChange={e => setChatMode(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-[12px] font-bold rounded-lg px-2 py-1.5 outline-none focus:border-green-400 focus:bg-white transition-colors cursor-pointer"
+                  >
+                      <option value="ALL">📢 모두에게 (Public)</option>
+                      {teamMembers.filter(m => String(m.userId) !== String(user?.id)).map(member => (
+                          <option key={member.userId} value={member.userId}>
+                              👤 {member.nickname} 님에게 (DM)
+                          </option>
+                      ))}
+                  </select>
+              </div>
+
               <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg focus-within:border-green-400 focus-within:bg-white px-3 py-2 transition-all shadow-inner">
                   <input 
                       value={chatInput} 
                       onChange={e => setChatInput(e.target.value)} 
                       onKeyDown={e => e.key === 'Enter' && handleSend()} 
                       className="flex-1 bg-transparent border-none outline-none text-[13px] placeholder-gray-400" 
-                      placeholder="팀원에게 메시지 보내기..." 
+                      placeholder={chatMode === 'ALL' ? "모두에게 메시지 보내기..." : "귓속말 보내기..."} 
                   />
                   <button 
                       onClick={handleSend} 
@@ -87,9 +187,8 @@ export default function TeamIdeMain() {
 
   const { activeActivity, isTerminalVisible, isSidebarVisible, isAgentVisible, isDebugMode, codeMapMode } = useSelector(state => state.ui);
   const { workspaceId, activeProject } = useSelector(state => state.fileSystem);
-  const isCodeMapSplit = codeMapMode === 'split';
 
-  const [rightTab, setRightTab] = useState('chat'); // 'ai' | 'chat'
+  const [rightTab, setRightTab] = useState('chat');
 
   useEffect(() => {
     if (id) {
@@ -111,36 +210,29 @@ export default function TeamIdeMain() {
           default:
               return (
                 <div className="flex-1 flex overflow-hidden">
-                    {/* 좌측 사이드바 */}
                     {isSidebarVisible && (
                         <div className="w-[260px] shrink-0 border-r border-gray-200 flex flex-col bg-[#f8f9fa]">
                            <Sidebar />
                         </div>
                     )}
                     
-                    {/* 중앙 에디터 영역 */}
                     <div className="flex-1 flex flex-col min-w-0 bg-white">
                         <FileTabs />
                         <div className="flex-1 flex relative overflow-hidden">
-                            <div className="flex-1 flex flex-col min-w-0">
+                            <div className="flex-1 flex flex-col min-w-0 relative">
                                 <CodeEditor />
+                                <CodeMap />
                             </div>
-                            {isCodeMapSplit && (
-                                <div className="w-1/2 border-l border-gray-200 flex flex-col z-10">
-                                    <CodeMap />
-                                </div>
-                            )}
                         </div>
                         {isTerminalVisible && (
-                            <div className="h-[250px] border-t border-gray-200 bg-white shrink-0">
+                            <div className="h-[250px] border-t border-gray-200 bg-white shrink-0 z-[600]">
                                 <BottomPanel />
                             </div>
                         )}
                     </div>
 
-                    {/* 우측 패널 (IdeMain과 완벽히 동일한 w-[320px] 적용) */}
                     {(isAgentVisible || isDebugMode) && (
-                        <div className="w-[320px] shrink-0 border-l border-gray-200 flex flex-col bg-[#f8f9fa] z-20">
+                        <div className="w-[320px] shrink-0 border-l border-gray-200 flex flex-col bg-[#f8f9fa] z-[600]">
                            {isDebugMode ? (
                                <DebugPanel />
                            ) : (
@@ -165,7 +257,7 @@ export default function TeamIdeMain() {
                                            <AgentPanel />
                                        </div>
                                        <div className={`absolute inset-0 ${rightTab === 'chat' ? 'block' : 'hidden'}`}>
-                                           <CollaborationPanel />
+                                           <CollaborationPanel workspaceId={workspaceId} />
                                        </div>
                                    </div>
                                </div>

@@ -29,7 +29,6 @@ const initialState = {
   pendingCreation: null,
 
   agentMessages: [],
-  // 💡 [핵심 추가] 사용자가 에디터에서 드래그한 텍스트를 저장할 공간
   selectedText: '', 
 };
 
@@ -87,7 +86,6 @@ const uiSlice = createSlice({
     clearAgentMessages: (state) => {
         state.agentMessages = [];
     },
-    // 💡 [핵심 추가] 드래그 텍스트 업데이트 액션
     setSelectedText: (state, action) => {
         state.selectedText = action.payload;
     }
@@ -101,7 +99,7 @@ export const {
     writeToTerminal, clearTerminalOutput, triggerEditorCmd, startCreation, endCreation,
     closeCommandPalette, toggleCommandPalette, setCodeMapMode, closeCodeMap,
     addAgentMessage, clearAgentMessages, 
-    setSelectedText // 💡 내보내기 추가
+    setSelectedText 
 } = uiSlice.actions;
 
 export default uiSlice.reducer;

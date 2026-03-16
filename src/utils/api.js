@@ -44,7 +44,6 @@ export const registerApi = async (email, nickname, password) => {
     return await response.json();
 };
 
-// 💡 [신규 추가] 유저 프로필 정보 가져오기
 export const getUserProfileApi = async (userId) => {
     const response = await authFetch(`${AUTH_API_BASE}/${userId}`);
     if (!response.ok) throw new Error("유저 정보를 불러올 수 없습니다.");
@@ -61,10 +60,10 @@ export const getMyWorkspacesApi = async (userId = getCurrentUserId()) => {
   return await response.json();
 };
 
-export const createWorkspaceApi = async (name, path = "", userId = getCurrentUserId()) => {
+export const createWorkspaceApi = async (name, path = "", userId = getCurrentUserId(), type = "PERSONAL") => {
   const response = await authFetch(`${API_BASE}`, {
     method: "POST",
-    body: JSON.stringify({ userId: userId.toString(), name, path, type: "PERSONAL" }), 
+    body: JSON.stringify({ userId: userId.toString(), name, path, type }), 
   });
   if (!response.ok) throw new Error("워크스페이스 생성 실패");
   return await response.json();
@@ -326,4 +325,59 @@ export const fetchAiAutocompleteApi = async (payload) => {
     });
     if (!response.ok) throw new Error("Autocomplete failed");
     return await response.text();
+};
+
+export const generateCodeComponentApi = async (workspaceId, projectName, branchName, payload) => {
+    const response = await authFetch(`http://localhost:8080/api/codemap/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ workspaceId, projectName, branchName, ...payload })
+    });
+    if (!response.ok) {
+        const errMsg = await response.text();
+        throw new Error(errMsg || "코드 주입 실패");
+    }
+    return await response.text();
+};
+
+export const inviteWorkspaceMemberApi = async (workspaceId, email) => {
+    const response = await authFetch(`${API_BASE}/invite`, {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, email })
+    });
+    if (!response.ok) {
+        const errMsg = await response.text();
+        throw new Error(errMsg || "초대 실패");
+    }
+    return await response.text();
+};
+
+export const fetchPendingInvitationsApi = async (userId = getCurrentUserId()) => {
+    const response = await authFetch(`${API_BASE}/invitations?userId=${userId}`);
+    if (!response.ok) throw new Error("초대 목록을 불러오지 못했습니다.");
+    return await response.json();
+};
+
+export const acceptWorkspaceInvitationApi = async (workspaceId, userId = getCurrentUserId()) => {
+    const response = await authFetch(`${API_BASE}/${workspaceId}/accept?userId=${userId}`, { method: 'POST' });
+    if (!response.ok) throw new Error("초대 수락 실패");
+    return await response.text();
+};
+
+export const rejectWorkspaceInvitationApi = async (workspaceId, userId = getCurrentUserId()) => {
+    const response = await authFetch(`${API_BASE}/${workspaceId}/reject?userId=${userId}`, { method: 'POST' });
+    if (!response.ok) throw new Error("초대 거절 실패");
+    return await response.text();
+};
+
+export const getWorkspaceMembersApi = async (workspaceId) => {
+    const response = await authFetch(`${API_BASE}/${workspaceId}/members`);
+    if (!response.ok) throw new Error("팀원 목록을 불러오지 못했습니다.");
+    return await response.json();
+};
+
+// 💡 [수정됨] userId를 추가로 받아서 내 메시지만 필터링하도록 백엔드에 요청합니다!
+export const fetchChatHistoryApi = async (workspaceId, userId) => {
+    const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/chat?userId=${userId}`);
+    if (!response.ok) throw new Error("채팅 내역을 불러오지 못했습니다.");
+    return await response.json();
 };

@@ -2,14 +2,16 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { setActiveBranch, closeAllFiles, closeFile, openCodeMapTab } from '../store/slices/fileSystemSlice';
-import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, setCurrentDebugLine, updateDebugVariables, toggleSidebar, triggerEditorCmd, toggleTerminal, setCodeMapMode } from '../store/slices/uiSlice';
+import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, triggerEditorCmd, toggleTerminal, toggleSidebar, setCodeMapMode } from '../store/slices/uiSlice';
 import { DebugSocket } from '../utils/debugSocket'; 
 import { RunSocket } from '../utils/runSocket'; 
 import { 
     VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh, 
-    VscClose, VscOrganization, VscMic, VscCallOutgoing, VscAccount, VscMail, VscCopy, VscCheck, VscMute
+    VscClose, VscOrganization, VscMic, VscAccount, VscMail, VscCopy, VscCheck, VscMute, VscKey
 } from "react-icons/vsc";
-import { fetchBranchListApi, createBranchApi, saveFileApi } from '../utils/api'; 
+// 💡 [수정] getUserProfileApi 임포트 추가!
+import { fetchBranchListApi, createBranchApi, saveFileApi, getWorkspaceMembersApi, inviteWorkspaceMemberApi, getUserProfileApi } from '../utils/api'; 
+import { useAuth } from '../utils/AuthContext'; 
 
 const getLanguageFromPath = (path) => {
     if (!path) return 'UNKNOWN';
@@ -26,11 +28,17 @@ const getLanguageFromPath = (path) => {
     }
 };
 
+const avatarColors = ['bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500', 'bg-teal-500'];
+
 export default function MenuBar({ mode = 'personal' }) {
   const navigate = useNavigate();
   const location = useLocation(); 
   const dispatch = useDispatch();
+  const { user } = useAuth(); 
   
+  // 💡 [NEW] 확실한 내 프로필 상태 저장
+  const [myProfile, setMyProfile] = useState(null);
+
   const { workspaceId, activeProject, activeBranch, fileContents, activeFileId } = useSelector(state => state.fileSystem);
   const { isTerminalVisible, breakpoints, codeMapMode } = useSelector(state => state.ui);
 
@@ -38,22 +46,34 @@ export default function MenuBar({ mode = 'personal' }) {
   const [isNotiOpen, setIsNotiOpen] = useState(false);
   const [isBranchOpen, setIsBranchOpen] = useState(false);
   
-  // 모달창 상태 관리
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
   const [isVoiceChatModalOpen, setIsVoiceChatModalOpen] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [inviteRole, setInviteRole] = useState('Member');
   const [isCopied, setIsCopied] = useState(false);
+  
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [isInviting, setIsInviting] = useState(false);
   
   const [branches, setBranches] = useState([]);
   const [newBranchName, setNewBranchName] = useState("");
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
   
+  const [teamMembers, setTeamMembers] = useState([]);
+
   const menuRef = useRef(null);
   const notiRef = useRef(null);
   const branchRef = useRef(null);
 
   const isRelocationPage = location.pathname.includes('/relocation') || location.pathname.includes('/rearrange');
+
+  // 💡 [NEW] 컴포넌트 마운트 시 내 프로필 정보 확실하게 땡겨오기
+  useEffect(() => {
+      if (user && user.id) {
+          getUserProfileApi(user.id)
+              .then(profile => setMyProfile(profile))
+              .catch(err => console.error("프로필 정보를 불러오지 못했습니다.", err));
+      }
+  }, [user]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -65,7 +85,6 @@ export default function MenuBar({ mode = 'personal' }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // 모달 닫기 (ESC)
   useEffect(() => {
       const handleEsc = (e) => {
           if (e.key === 'Escape') {
@@ -87,6 +106,14 @@ export default function MenuBar({ mode = 'personal' }) {
           setBranches([]);
       }
   }, [workspaceId, activeProject, isBranchOpen]);
+
+  useEffect(() => {
+      if (mode === 'team' && workspaceId) {
+          getWorkspaceMembersApi(workspaceId)
+              .then(members => setTeamMembers(members))
+              .catch(err => console.error("팀원 목록 로드 실패:", err));
+      }
+  }, [mode, workspaceId, isTeamModalOpen]);
 
   const handleSelectBranch = (branchName) => {
       if (branchName === activeBranch) return; 
@@ -111,10 +138,26 @@ export default function MenuBar({ mode = 'personal' }) {
       }
   };
 
-  const handleCopyLink = () => {
-      navigator.clipboard.writeText("https://vside.app/invite/v9x2K1");
+  const handleCopyCode = () => {
+      if (!workspaceId) return alert("워크스페이스 ID를 찾을 수 없습니다.");
+      navigator.clipboard.writeText(workspaceId);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000); 
+  };
+
+  const handleSendInvite = async () => {
+      if (!inviteEmail.trim()) return alert("초대할 이메일 주소를 입력해주세요.");
+      try {
+          setIsInviting(true);
+          await inviteWorkspaceMemberApi(workspaceId, inviteEmail);
+          alert(`✨ ${inviteEmail} 님에게 초대장을 발송했습니다!`);
+          setInviteEmail(""); 
+          setIsInviteModalOpen(false); 
+      } catch (e) {
+          alert("초대 실패: " + e.message);
+      } finally {
+          setIsInviting(false);
+      }
   };
 
   const handleMenuItemClick = async (menuName, itemName) => {
@@ -327,11 +370,11 @@ export default function MenuBar({ mode = 'personal' }) {
 
           case '전체 화면':
               dispatch(setCodeMapMode('full'));       
-              dispatch(openCodeMapTab('full'));       
+              if(typeof openCodeMapTab === 'function') dispatch(openCodeMapTab('full'));       
               break;
           case '분할 화면':
               dispatch(setCodeMapMode('split'));      
-              dispatch(openCodeMapTab('split'));      
+              if(typeof openCodeMapTab === 'function') dispatch(openCodeMapTab('split'));      
               break;
 
           case '정보':
@@ -354,21 +397,6 @@ export default function MenuBar({ mode = 'personal' }) {
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
         handleMenuItemClick(null, '저장');
-      } else if (e.key === 'F5' && !e.shiftKey) {
-        e.preventDefault();
-        handleMenuItemClick(null, '디버깅 시작');
-      } else if (e.ctrlKey && e.key === 'F5') { 
-        e.preventDefault();
-        handleMenuItemClick(null, '디버깅 없이 실행');
-      } else if (e.shiftKey && e.key === 'F5') {
-        e.preventDefault();
-        handleMenuItemClick(null, '디버깅 중지');
-      } else if (e.key === 'F10') {
-        e.preventDefault();
-        handleMenuItemClick(null, '한 단계씩 코드 실행');
-      } else if (e.key === 'F11') {
-        e.preventDefault();
-        handleMenuItemClick(null, '프로시저 단위 실행');
       } else if (e.ctrlKey && e.shiftKey && (e.key === '`' || e.key === '~')) {
         e.preventDefault();
         handleMenuItemClick(null, '새 터미널');
@@ -381,7 +409,6 @@ export default function MenuBar({ mode = 'personal' }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeFileId, workspaceId, activeProject, activeBranch, fileContents, isTerminalVisible, codeMapMode]);
 
-  // 💡 GNB 메뉴에 '자료재배치' 추가 및 라우팅 연결
   const gnbMenus = [
       { label: '대시보드', action: () => navigate('/') },
       { label: '일정관리', action: () => alert('일정관리 서비스로 이동합니다.') },
@@ -462,11 +489,14 @@ export default function MenuBar({ mode = 'personal' }) {
 
   const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
 
+  // 💡 [NEW] 렌더링에 사용할 실제 이름 추출
+  const displayNickname = myProfile?.nickname || user?.nickname || '사용자';
+  const displayInitial = displayNickname[0] || '유';
+
   return (
     <>
-      <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0 z-40 relative">
+      <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0 z-[1000] relative">
         
-        {/* 1. 최상단 GNB 메뉴 */}
         <div className="flex items-center justify-between px-6 h-12 relative border-b border-gray-100">
           <div className="font-extrabold text-xl tracking-tight text-gray-900 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => navigate('/')}>VSIDE</div>
           
@@ -484,14 +514,16 @@ export default function MenuBar({ mode = 'personal' }) {
                     <VscBell size={20} />
                 </div>
              </div>
+             {/* 💡 [FIX] 상단 내 프로필 표시 완벽 적용! */}
              <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
-                 <div className="w-7 h-7 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center text-xs text-blue-700 font-bold">노</div>
-                 <span>노민주 님</span>
+                 <div className="w-7 h-7 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center text-xs text-blue-700 font-bold">
+                     {displayInitial}
+                 </div>
+                 <span>{displayNickname} 님</span>
              </div>
           </div>
         </div>
 
-        {/* 2. 에디터 하위 메뉴 */}
         {!isRelocationPage && (
             <div className="flex items-center justify-between px-4 h-9 bg-[#f8f9fa] border-t border-gray-100 relative" ref={menuRef}>
               <div className="flex items-center gap-1 text-[13px] text-gray-700">
@@ -521,7 +553,6 @@ export default function MenuBar({ mode = 'personal' }) {
                       </div>
                   ))}
                   
-                  {/* 팀 메뉴 버튼 */}
                   {mode === 'team' && (
                       <div className="flex items-center gap-1.5 ml-3 border-l border-gray-300 pl-3 animate-fade-in">
                           <div onClick={() => setIsTeamModalOpen(true)} className="cursor-pointer px-3 py-1 rounded-md font-extrabold text-blue-600 bg-blue-50/80 hover:bg-blue-100 hover:shadow-sm active:scale-95 transition-all border border-blue-100 flex items-center gap-1.5">
@@ -598,39 +629,34 @@ export default function MenuBar({ mode = 'personal' }) {
                       )}
                   </div>
                   
-                  {/* 아바타 목록 및 팀 뱃지 */}
                   {mode === 'team' && (
                       <div className="relative group flex items-center cursor-help ml-2 mr-1">
                           <div className="flex -space-x-1.5">
-                              <div className="w-7 h-7 rounded-full bg-blue-500 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold z-30 shadow-sm relative">
-                                  노<div className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 border-2 border-white rounded-full"></div>
-                              </div>
-                              <div className="w-7 h-7 rounded-full bg-green-500 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold z-20 shadow-sm relative">
-                                  길<div className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 border-2 border-white rounded-full"></div>
-                              </div>
-                              <div className="w-7 h-7 rounded-full bg-purple-500 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold z-10 shadow-sm relative opacity-60">
-                                  철<div className="absolute bottom-0 right-0 w-2 h-2 bg-gray-400 border-2 border-white rounded-full"></div>
-                              </div>
+                              {teamMembers.slice(0, 3).map((member, idx) => (
+                                  <div key={member.userId} className={`w-7 h-7 rounded-full ${avatarColors[idx % avatarColors.length]} border-2 border-white flex items-center justify-center text-[10px] text-white font-bold shadow-sm relative z-${30 - idx * 10}`}>
+                                      {member.nickname?.[0]}
+                                      <div className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 border-2 border-white rounded-full"></div>
+                                  </div>
+                              ))}
+                              {teamMembers.length > 3 && (
+                                  <div className="w-7 h-7 rounded-full bg-gray-500 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold z-0 shadow-sm relative">
+                                      +{teamMembers.length - 3}
+                                  </div>
+                              )}
                           </div>
                           
-                          <div className="absolute top-full right-0 mt-2 w-52 bg-white border border-gray-200 shadow-xl rounded-xl p-3 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50">
-                              <p className="text-xs font-black text-gray-800 mb-3 border-b border-gray-100 pb-2">현재 접속 중인 팀원 (3)</p>
+                          <div className="absolute top-full right-0 mt-2 w-52 bg-white border border-gray-200 shadow-xl rounded-xl p-3 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-[9999]">
+                              <p className="text-xs font-black text-gray-800 mb-3 border-b border-gray-100 pb-2">팀원 ({teamMembers.length})</p>
                               <div className="space-y-2">
-                                  <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                          <span className="text-[12px] font-bold text-gray-800">노민주</span>
+                                  {teamMembers.map((member) => (
+                                      <div key={member.userId} className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2">
+                                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                              <span className="text-[12px] font-bold text-gray-800 truncate max-w-[80px]">{member.nickname}</span>
+                                          </div>
+                                          {user?.id === member.userId && <span className="text-[10px] text-blue-500 font-bold bg-blue-50 px-1.5 py-0.5 rounded">Me</span>}
                                       </div>
-                                      <span className="text-[10px] text-blue-500 font-bold bg-blue-50 px-1.5 py-0.5 rounded">Me</span>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                                      <span className="text-[12px] font-medium text-gray-700">홍길동</span>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                      <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
-                                      <span className="text-[12px] font-medium text-gray-400">김철수 <span className="text-[10px]">(오프라인)</span></span>
-                                  </div>
+                                  ))}
                               </div>
                           </div>
                       </div>
@@ -650,37 +676,36 @@ export default function MenuBar({ mode = 'personal' }) {
         )}
       </div>
 
-      {/* 팀 관리 모달 */}
       {isTeamModalOpen && mode === 'team' && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9998] flex items-center justify-center animate-fade-in" onClick={() => setIsTeamModalOpen(false)}>
               <div className="bg-white rounded-2xl shadow-2xl w-[400px] overflow-hidden flex flex-col animate-slide-up ring-1 ring-black/5" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white">
-                      <h2 className="text-lg font-black text-gray-900">팀원 관리 <span className="text-blue-500 ml-1">3</span></h2>
+                      <h2 className="text-lg font-black text-gray-900">팀원 관리 <span className="text-blue-500 ml-1">{teamMembers.length}</span></h2>
                       <button onClick={() => setIsTeamModalOpen(false)} className="text-gray-400 hover:text-gray-800 bg-gray-50 hover:bg-gray-100 p-1.5 rounded-full transition-colors"><VscClose size={20}/></button>
                   </div>
                   <div className="p-4 space-y-2 max-h-[350px] overflow-y-auto bg-gray-50/50 custom-scrollbar">
-                      {[
-                          { name: '노민주', role: 'Owner (나)', color: 'bg-blue-500', status: '온라인' },
-                          { name: '김철수', role: 'Admin', color: 'bg-teal-500', status: '온라인' },
-                          { name: '이영희', role: 'Member', color: 'bg-indigo-500', status: '온라인' },
-                      ].map((user, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-3.5 bg-white rounded-xl border border-gray-200 hover:border-blue-400 hover:shadow-md hover:ring-2 hover:ring-blue-50 transition-all group cursor-default">
-                              <div className="flex items-center gap-3.5">
-                                  <div className="relative">
-                                      <div className={`w-10 h-10 rounded-full ${user.color} text-white flex items-center justify-center font-bold text-[14px] shadow-sm`}>{user.name[0]}</div>
-                                      <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></div>
-                                  </div>
-                                  <div className="flex flex-col">
-                                      <div className="flex items-center gap-2">
-                                          <span className="font-extrabold text-[13px] text-gray-900">{user.name}</span>
-                                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${idx === 0 ? 'bg-blue-100 text-blue-700' : idx === 1 ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'}`}>{user.role}</span>
+                      {teamMembers.map((member, idx) => {
+                          const isMe = user?.id === member.userId;
+                          return (
+                              <div key={member.userId} className="flex items-center justify-between p-3.5 bg-white rounded-xl border border-gray-200 hover:border-blue-400 hover:shadow-md hover:ring-2 hover:ring-blue-50 transition-all group cursor-default">
+                                  <div className="flex items-center gap-3.5">
+                                      <div className="relative">
+                                          <div className={`w-10 h-10 rounded-full ${avatarColors[idx % avatarColors.length]} text-white flex items-center justify-center font-bold text-[14px] shadow-sm`}>{member.nickname?.[0]}</div>
+                                          <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-white rounded-full"></div>
                                       </div>
-                                      <span className="text-[11px] text-gray-500 mt-0.5">{user.name === '노민주' ? 'you@vside.app' : 'teammate@vside.app'}</span>
+                                      <div className="flex flex-col">
+                                          <div className="flex items-center gap-2">
+                                              <span className="font-extrabold text-[13px] text-gray-900">{member.nickname}</span>
+                                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-sm ${member.role === 'OWNER' ? 'bg-blue-100 text-blue-700' : member.role === 'ADMIN' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                  {member.role === 'OWNER' ? 'Owner' : member.role === 'ADMIN' ? 'Admin' : 'Member'} {isMe && '(나)'}
+                                              </span>
+                                          </div>
+                                          <span className="text-[11px] text-gray-500 mt-0.5">{member.email}</span>
+                                      </div>
                                   </div>
                               </div>
-                              {idx !== 0 && <button className="text-gray-300 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><VscClose size={18}/></button>}
-                          </div>
-                      ))}
+                          );
+                      })}
                   </div>
                   <div className="p-4 border-t border-gray-100 bg-white">
                       <button onClick={() => { setIsInviteModalOpen(true); setIsTeamModalOpen(false); }} className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white rounded-xl text-[13px] font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-200 transition-all">
@@ -691,48 +716,39 @@ export default function MenuBar({ mode = 'personal' }) {
           </div>
       )}
 
-      {/* 초대장 발송 모달창 */}
       {isInviteModalOpen && mode === 'team' && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center animate-fade-in" onClick={() => setIsInviteModalOpen(false)}>
-              <div className="bg-white rounded-2xl shadow-2xl w-[480px] overflow-hidden flex flex-col animate-slide-up ring-1 ring-black/5" onClick={e => e.stopPropagation()}>
+              <div className="bg-white rounded-2xl shadow-2xl w-[420px] overflow-hidden flex flex-col animate-slide-up ring-1 ring-black/5" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100 bg-white">
                       <div>
                           <h2 className="text-lg font-black text-gray-900">팀원 초대</h2>
-                          <p className="text-xs text-gray-500 mt-1">이메일로 초대하거나 링크를 공유하세요</p>
+                          <p className="text-xs text-gray-500 mt-1">이메일 발송 또는 프로젝트 코드로 초대하세요</p>
                       </div>
                       <button onClick={() => setIsInviteModalOpen(false)} className="text-gray-400 hover:text-gray-800 bg-gray-50 hover:bg-gray-100 p-1.5 rounded-full transition-colors"><VscClose size={20}/></button>
                   </div>
                   
                   <div className="p-6 space-y-7 bg-gray-50/50">
-                      <div className="space-y-5">
+                      <div className="space-y-4">
                           <div className="space-y-1.5">
-                              <label className="text-[13px] font-extrabold text-gray-800">초대할 이메일 주소</label>
-                              <input type="text" placeholder="teammate@example.com" className="w-full px-4 py-3 border border-gray-300 rounded-xl text-[13px] outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50 bg-white transition-all shadow-sm" />
-                          </div>
-                          <div className="space-y-1.5">
-                              <label className="text-[13px] font-extrabold text-gray-800">역할(Role) 선택</label>
-                              <div className="grid grid-cols-3 gap-3">
-                                  {['Owner', 'Admin', 'Member'].map(role => (
-                                      <button 
-                                          key={role} 
-                                          onClick={() => setInviteRole(role)}
-                                          className={`py-2.5 rounded-xl text-[12px] font-bold transition-all border-2 relative overflow-hidden ${
-                                              inviteRole === role 
-                                              ? 'border-blue-600 bg-blue-50/50 text-blue-700 shadow-sm' 
-                                              : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:bg-gray-50'
-                                          }`}
-                                      >
-                                          {role}
-                                          <span className={`block text-[10px] font-medium mt-0.5 ${inviteRole === role ? 'text-blue-500' : 'text-gray-400'}`}>
-                                              {role === 'Owner' ? '모든 권한' : role === 'Admin' ? '관리자 권한' : '편집 권한'}
-                                          </span>
-                                      </button>
-                                  ))}
+                              <label className="text-[13px] font-extrabold text-gray-800 flex items-center gap-1.5"><VscMail className="text-blue-500"/> 이메일로 초대장 발송</label>
+                              <div className="flex gap-2">
+                                  <input 
+                                      type="text" 
+                                      value={inviteEmail}
+                                      onChange={(e) => setInviteEmail(e.target.value)}
+                                      onKeyDown={(e) => { if(e.key === 'Enter') handleSendInvite(); }}
+                                      placeholder="teammate@example.com" 
+                                      className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-[13px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-50 bg-white transition-all shadow-sm" 
+                                  />
+                                  <button 
+                                      onClick={handleSendInvite}
+                                      disabled={isInviting || !inviteEmail.trim()}
+                                      className="px-5 bg-[#2d333b] hover:bg-black text-white rounded-xl text-[13px] font-bold transition-all shadow-sm disabled:opacity-50 flex items-center justify-center shrink-0"
+                                  >
+                                      {isInviting ? <VscRefresh className="animate-spin" size={16}/> : '발송'}
+                                  </button>
                               </div>
                           </div>
-                          <button className="w-full py-3.5 bg-[#2d333b] hover:bg-black text-white rounded-xl text-[13px] font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-[0.98]">
-                              <VscMail size={16} /> 초대장 발송하기
-                          </button>
                       </div>
 
                       <div className="flex items-center gap-4">
@@ -742,13 +758,14 @@ export default function MenuBar({ mode = 'personal' }) {
                       </div>
 
                       <div className="space-y-2">
-                          <label className="text-[13px] font-extrabold text-gray-800">초대 링크 복사</label>
+                          <label className="text-[13px] font-extrabold text-gray-800 flex items-center gap-1.5"><VscKey className="text-green-500"/> 프로젝트 코드 공유</label>
+                          <p className="text-[11px] text-gray-500">새로운 팀원이 대시보드에서 이 코드를 입력하여 참여할 수 있습니다.</p>
                           <div className="flex items-center gap-2 mt-2">
-                              <div className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-[12px] text-gray-600 truncate font-mono shadow-sm select-all">
-                                  https://vside.app/invite/v9x2K1
+                              <div className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-[13px] text-gray-700 truncate font-mono shadow-sm select-all font-bold tracking-wider text-center">
+                                  {workspaceId || "PROJ-XXXX-YYYY"}
                               </div>
                               <button 
-                                  onClick={handleCopyLink}
+                                  onClick={handleCopyCode}
                                   className={`px-5 py-3 rounded-xl flex items-center gap-1.5 text-[12px] font-bold shrink-0 transition-all shadow-sm ${isCopied ? 'bg-green-500 text-white border-transparent' : 'bg-white border border-gray-300 text-gray-800 hover:bg-gray-50 active:scale-95'}`}
                               >
                                   {isCopied ? <><VscCheck size={14}/> 복사됨</> : <><VscCopy size={14}/> 복사</>}
@@ -760,7 +777,6 @@ export default function MenuBar({ mode = 'personal' }) {
           </div>
       )}
 
-      {/* 보이스챗 모달창 */}
       {isVoiceChatModalOpen && mode === 'team' && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center animate-fade-in" onClick={() => setIsVoiceChatModalOpen(false)}>
               <div className="bg-white rounded-2xl shadow-2xl w-[360px] overflow-hidden flex flex-col animate-slide-up ring-1 ring-black/5" onClick={e => e.stopPropagation()}>
@@ -772,52 +788,8 @@ export default function MenuBar({ mode = 'personal' }) {
                   </div>
                   
                   <div className="p-6 space-y-6">
-                      <div>
-                          <h3 className="text-xs font-extrabold text-green-600 mb-4 bg-green-100 px-2.5 py-1 rounded-md inline-block">참여중 2명</h3>
-                          <div className="space-y-3">
-                              <div className="flex items-center justify-between bg-white border border-gray-200 p-3 rounded-xl shadow-sm hover:border-green-300 transition-colors">
-                                  <div className="flex items-center gap-3.5">
-                                      <div className="relative">
-                                          <div className="w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center text-[14px] font-bold shadow-sm ring-2 ring-green-400 z-10 relative">노</div>
-                                          <div className="absolute -inset-1.5 border-2 border-green-400 rounded-full animate-ping opacity-75"></div>
-                                      </div>
-                                      <div className="flex flex-col">
-                                          <span className="text-[13px] font-extrabold text-gray-900">노민주 <span className="text-[10px] font-normal text-gray-400 ml-0.5">(나)</span></span>
-                                          <span className="text-[10px] text-green-500 font-bold flex items-center gap-1 mt-0.5"><VscMic size={11}/> Speaking...</span>
-                                      </div>
-                                  </div>
-                                  <button className="w-9 h-9 rounded-full bg-gray-50 border border-gray-200 text-gray-600 flex items-center justify-center hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition-all shadow-sm">
-                                      <VscMic size={16}/>
-                                  </button>
-                              </div>
-                              
-                              <div className="flex items-center justify-between bg-white border border-gray-200 p-3 rounded-xl shadow-sm transition-colors">
-                                  <div className="flex items-center gap-3.5">
-                                      <div className="w-10 h-10 bg-teal-500 text-white rounded-full flex items-center justify-center text-[14px] font-bold shadow-sm opacity-90">김</div>
-                                      <div className="flex flex-col">
-                                          <span className="text-[13px] font-extrabold text-gray-900">김철수</span>
-                                          <span className="text-[10px] text-gray-400 font-medium flex items-center gap-1 mt-0.5"><VscMute size={11}/> Muted</span>
-                                      </div>
-                                  </div>
-                                  <input type="range" min="0" max="100" defaultValue="70" className="w-20 accent-teal-500 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
-                              </div>
-                          </div>
-                      </div>
-                      
-                      <div className="h-px bg-gray-100"></div>
-                      
-                      <div>
-                          <h3 className="text-xs font-bold text-gray-400 mb-4 px-1">대기중 2명</h3>
-                          <div className="space-y-3 px-1">
-                              <div className="flex items-center gap-3.5 opacity-50 grayscale">
-                                  <div className="w-8 h-8 bg-gray-300 text-white rounded-full flex items-center justify-center text-[12px] font-bold"><VscAccount size={16}/></div>
-                                  <span className="text-[12px] font-bold text-gray-600">이영희</span>
-                              </div>
-                              <div className="flex items-center gap-3.5 opacity-50 grayscale">
-                                  <div className="w-8 h-8 bg-gray-300 text-white rounded-full flex items-center justify-center text-[12px] font-bold"><VscAccount size={16}/></div>
-                                  <span className="text-[12px] font-bold text-gray-600">강세균</span>
-                              </div>
-                          </div>
+                      <div className="text-center text-gray-500 font-bold text-sm">
+                          보이스챗 소켓 연동 대기 중입니다... 🎤
                       </div>
                   </div>
               </div>

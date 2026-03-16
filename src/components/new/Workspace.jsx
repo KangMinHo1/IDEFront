@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkspaceWizardStore } from '../../store/workspaceWizardStore';
-import { VscFolder, VscAccount, VscOrganization, VscCopy } from "react-icons/vsc";
+// 💡 [수정] 아이콘 목록에 VscClose 추가
+import { VscFolder, VscAccount, VscOrganization, VscCopy, VscClose } from "react-icons/vsc";
 import PathSelectionModal from './PathSelectionModal';
 
 export default function Workspace() {
@@ -9,7 +10,8 @@ export default function Workspace() {
   
   const { 
     wsName, wsDesc, wsPath, wsType, 
-    invitedEmails, setData, setStep, addEmail 
+    // 💡 [수정] 스토어에서 removeEmail과 reset 함수 꺼내오기
+    invitedEmails, setData, setStep, addEmail, removeEmail, reset 
   } = useWorkspaceWizardStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,7 +39,6 @@ export default function Workspace() {
 
       <div className="space-y-5">
         <div>
-          {/* 💡 수정: 모든 글씨를 어두운 색(text-gray-800)으로 변경하여 가시성 확보 */}
           <label className="block text-[14px] font-bold text-gray-800 mb-2">워크스페이스 이름(J)</label>
           <input 
             value={wsName} 
@@ -65,7 +66,6 @@ export default function Workspace() {
               readOnly 
               className="flex-1 bg-[#f8f9fa] border border-gray-200 px-5 py-3.5 rounded-2xl text-gray-700 font-mono text-[13px] outline-none shadow-inner" 
             />
-            {/* 💡 수정: 클릭 버튼임을 명확하게 인지하도록 파란색 버튼으로 강조 */}
             <button 
               onClick={() => setIsModalOpen(true)} 
               className="px-5 bg-blue-600 border border-blue-700 rounded-2xl hover:bg-blue-700 shadow-sm transition-all flex items-center justify-center group"
@@ -120,8 +120,9 @@ export default function Workspace() {
               <input 
                 value={emailInput} 
                 onChange={e => setEmailInput(e.target.value)} 
+                onKeyDown={(e) => { if(e.key === 'Enter' && emailInput) { addEmail(emailInput); setEmailInput(""); } }}
                 className="flex-1 bg-[#f8f9fa] border border-gray-300 px-4 py-3 rounded-xl outline-none text-[14px] text-gray-900 focus:border-blue-500 transition-colors" 
-                placeholder="teammate@example.com" 
+                placeholder="teammate@example.com (엔터로 추가 가능)" 
               />
               <button 
                 onClick={() => { if(emailInput) { addEmail(emailInput); setEmailInput(""); } }} 
@@ -133,8 +134,16 @@ export default function Workspace() {
             {invitedEmails.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-4">
                 {invitedEmails.map((email, idx) => (
-                  <span key={idx} className="px-3 py-1.5 bg-blue-50 text-blue-700 text-[12px] font-bold rounded-full border border-blue-200 shadow-sm animate-fade-in">
+                  // 💡 [수정] flex 구조로 만들고 옆에 X 모양의 삭제 버튼 추가
+                  <span key={idx} className="px-3 py-1.5 bg-blue-50 text-blue-700 text-[12px] font-bold rounded-full border border-blue-200 shadow-sm animate-fade-in flex items-center gap-1.5">
                     {email}
+                    <button 
+                      onClick={() => removeEmail(email)} 
+                      className="text-blue-400 hover:text-red-500 hover:bg-blue-100 rounded-full p-0.5 transition-colors"
+                      title="삭제"
+                    >
+                      <VscClose size={14} />
+                    </button>
                   </span>
                 ))}
               </div>
@@ -155,7 +164,10 @@ export default function Workspace() {
 
       <div className="flex justify-end gap-3 pt-10 pb-6">
         <button 
-          onClick={() => navigate('/')} 
+          onClick={() => {
+            reset();          // 💡 [수정] 나가기 전에 스토어 싹 비우기!
+            navigate('/');   // 대시보드로 이동
+          }} 
           className="px-10 py-3.5 bg-white border border-gray-300 text-gray-700 font-bold text-[15px] rounded-[20px] hover:bg-gray-50 transition-all"
         >
           뒤로(B)

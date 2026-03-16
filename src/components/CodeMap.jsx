@@ -1,22 +1,21 @@
-// src/components/CodeMap.jsx
-import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react'; // 💡 useRef 추가
+import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom'; // 💡 [NEW] 모달을 최상단으로 띄우기 위한 Portal 임포트
 import { useSelector, useDispatch } from 'react-redux';
 import ReactFlow, { Background, Controls, Handle, Position, MarkerType, applyNodeChanges } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { 
-    VscClose, VscGoToFile, VscFile, VscRefresh, VscLink, VscSymbolClass, VscSymbolInterface, VscSymbolEnum, VscAdd, VscTrash
+    VscClose, VscGoToFile, VscFile, VscRefresh, VscLink, VscSymbolClass, VscSymbolInterface, VscSymbolEnum, VscAdd, VscTrash,
+    VscSymbolVariable, VscSymbolMethod
 } from "react-icons/vsc";
-import { closeCodeMap, setActiveActivity } from '../store/slices/uiSlice'; 
+import { closeCodeMap, setActiveActivity, setCodeMapMode } from '../store/slices/uiSlice'; 
 
-import { openFile, mergeProjectFiles, updateFileContent, closeFilesByPath } from '../store/slices/fileSystemSlice'; 
+import { openFile, mergeProjectFiles, updateFileContent, closeFilesByPath, closeFile } from '../store/slices/fileSystemSlice'; 
 import { 
     createCodeMapComponentApi, createCodeMapRelationApi, 
-    deleteCodeMapRelationApi, fetchProjectFilesApi, fetchFileContentApi, deleteFileApi 
+    deleteCodeMapRelationApi, fetchProjectFilesApi, fetchFileContentApi, deleteFileApi,
+    generateCodeComponentApi 
 } from '../utils/api'; 
 
-// =========================================================
-// 💡 커스텀 노드 디자인 (OOP 테마 적용)
-// =========================================================
 const CustomNode = ({ data }) => {
     let roleColor = "text-gray-500";
     let borderStyle = "border-gray-200";
@@ -65,7 +64,8 @@ export default function CodeMap() {
     const { workspaceId, activeProject, activeBranch, activeFileId } = useSelector(state => state.fileSystem);
     const { codeMapMode } = useSelector(state => state.ui);
 
-    const isSplit = codeMapMode === 'split';
+    const isSplit = codeMapMode === 'split' || codeMapMode === 'SPLIT';
+    const isFull = codeMapMode === 'full' || codeMapMode === 'FULL';
     
     const [rfNodes, setRfNodes] = useState([]);
     const [rfEdges, setRfEdges] = useState([]);
@@ -75,20 +75,45 @@ export default function CodeMap() {
     const [aiSummary, setAiSummary] = useState('');
     const [isSummaryLoading, setIsSummaryLoading] = useState(false);
 
-    // 💡 중복 요청 방지를 위한 Ref
     const lastRequestKeyRef = useRef("");
 
-    // 💡 우클릭 메뉴 관리 State
+    // 컨텍스트 메뉴 상태
     const [contextMenuPos, setContextMenuPos] = useState(null);
     const [nodeContextMenu, setNodeContextMenu] = useState(null);
     const [edgeContextMenu, setEdgeContextMenu] = useState(null);
 
-    // 모달 관리 State
+    // 새 컴포넌트 모달 상태
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newCompName, setNewCompName] = useState('');
     const [newCompType, setNewCompType] = useState('CLASS');
+    
+    // 관계 주입 상태
     const [pendingRelation, setPendingRelation] = useState(null);
     const [relationType, setRelationType] = useState('COMPOSITION');
+
+    // 💡 내부 코드 주입 (변수/메서드) 모달용 상태 
+    const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+    const [genTargetType, setGenTargetType] = useState('VARIABLE'); 
+    const [genAccessModifier, setGenAccessModifier] = useState('private');
+    const [genDataType, setGenDataType] = useState('String');
+    const [genName, setGenName] = useState('');
+    const [genInitialValue, setGenInitialValue] = useState('');
+    const [genParameters, setGenParameters] = useState('');
+    const [genBody, setGenBody] = useState('');
+
+    const isMapTab = activeFileId === 'Architecture Map' || activeFileId === 'CodeMap' || activeFileId?.includes('codemap');
+    
+    useEffect(() => {
+        if (codeMapMode === 'full' && !isMapTab) {
+            dispatch(closeCodeMap());
+        }
+    }, [codeMapMode, isMapTab, dispatch]);
+
+    useEffect(() => {
+        if (isMapTab && !codeMapMode) {
+            dispatch(setCodeMapMode('full')); 
+        }
+    }, [isMapTab, codeMapMode, dispatch]);
 
     const onNodesChange = useCallback((changes) => setRfNodes((nds) => applyNodeChanges(changes, nds)), []);
 
@@ -124,14 +149,10 @@ export default function CodeMap() {
     const fetchAndLayoutCodeMap = useCallback(async (isRefresh = false) => {
         if (!workspaceId || !activeProject) return;
 
-        // 💡 [중복 요청 방지 로직]
         const branch = activeBranch || 'master';
         const currentRequestKey = `${workspaceId}-${activeProject}-${branch}`;
         
-        // 새로고침 버튼을 누른 게 아니고, 이전 요청과 동일한 키라면 중복 호출로 간주하고 차단
-        if (!isRefresh && lastRequestKeyRef.current === currentRequestKey) {
-            return;
-        }
+        if (!isRefresh && lastRequestKeyRef.current === currentRequestKey && rfNodes.length > 0) return;
         
         lastRequestKeyRef.current = currentRequestKey;
         setIsLoading(true); setSelectedNode(null);
@@ -199,20 +220,11 @@ export default function CodeMap() {
 
             const generatedEdges = backendEdges.map(e => {
                 let strokeColor = '#94a3b8'; let strokeDasharray = '5 5'; let animated = false;
-
-                // 💡 백엔드 DTO 필드명인 relationType을 사용하여 스타일 결정
                 const rType = e.relationType;
 
-                if (rType === 'IMPLEMENTS') { 
-                    strokeColor = '#10b981'; strokeDasharray = '5 5'; animated = true; 
-                } 
-                else if (rType === 'EXTENDS') { 
-                    strokeColor = '#3b82f6'; strokeDasharray = 'none'; animated = true; 
-                } 
-                else if (rType === 'COMPOSITION') {
-                    strokeColor = '#6366f1'; strokeDasharray = 'none'; animated = true;
-                }
-                // IMPORT는 기본 회색 점선 유지
+                if (rType === 'IMPLEMENTS') { strokeColor = '#10b981'; strokeDasharray = '5 5'; animated = true; } 
+                else if (rType === 'EXTENDS') { strokeColor = '#3b82f6'; strokeDasharray = 'none'; animated = true; } 
+                else if (rType === 'COMPOSITION') { strokeColor = '#6366f1'; strokeDasharray = 'none'; animated = true; }
 
                 return {
                     id: e.id, source: e.source, target: e.target,
@@ -225,7 +237,7 @@ export default function CodeMap() {
 
             setRfNodes(generatedNodes); setRfEdges(generatedEdges);
         } catch (error) { console.error(error); } finally { setIsLoading(false); }
-    }, [workspaceId, activeProject, activeBranch]);
+    }, [workspaceId, activeProject, activeBranch, rfNodes.length]);
 
     useEffect(() => { fetchAndLayoutCodeMap(); }, [fetchAndLayoutCodeMap]);
 
@@ -266,14 +278,12 @@ export default function CodeMap() {
             await createCodeMapComponentApi(workspaceId, activeProject, activeBranch || 'master', newCompName, newCompType);
             setIsModalOpen(false); setNewCompName('');
             alert("✨ 컴포넌트가 성공적으로 생성되었습니다!");
-            await fetchAndLayoutCodeMap(true); // 강제 갱신
+            await fetchAndLayoutCodeMap(true); 
             const files = await fetchProjectFilesApi(workspaceId, activeProject, activeBranch || 'master');
             dispatch(mergeProjectFiles({ projectName: activeProject, files }));
         } catch (e) {
             alert("생성 실패: " + e.message);
-        } finally {
-            setIsLoading(false);
-        }
+        } finally { setIsLoading(false); }
     };
 
     const handleRelationSubmit = async () => {
@@ -284,7 +294,7 @@ export default function CodeMap() {
             alert(`🔗 코드가 성공적으로 삽입되었습니다!`);
             setPendingRelation(null);
             
-            await fetchAndLayoutCodeMap(true); // 강제 갱신
+            await fetchAndLayoutCodeMap(true); 
 
             let sourcePath = pendingRelation.source;
             if(!sourcePath.endsWith(".java")) sourcePath += ".java";
@@ -296,9 +306,7 @@ export default function CodeMap() {
         } catch (e) {
             alert("관계 연결 실패: " + e.message);
             setPendingRelation(null);
-        } finally {
-            setIsLoading(false);
-        }
+        } finally { setIsLoading(false); }
     };
 
     const handleDeleteNode = async () => {
@@ -320,7 +328,7 @@ export default function CodeMap() {
             alert("🗑️ 컴포넌트가 삭제되었습니다.");
             setNodeContextMenu(null);
             if(selectedNode && selectedNode.id === nodeData.id) setSelectedNode(null);
-            await fetchAndLayoutCodeMap(true); // 강제 갱신
+            await fetchAndLayoutCodeMap(true); 
             
         } catch (e) { alert("삭제 실패: " + e.message); } finally { setIsLoading(false); }
     };
@@ -338,7 +346,7 @@ export default function CodeMap() {
             
             alert("🔗 관계(코드)가 성공적으로 삭제되었습니다.");
             setEdgeContextMenu(null);
-            await fetchAndLayoutCodeMap(true); // 강제 갱신
+            await fetchAndLayoutCodeMap(true); 
 
             let sourcePath = source;
             if(!sourcePath.endsWith(".java")) sourcePath += ".java";
@@ -347,6 +355,45 @@ export default function CodeMap() {
                 dispatch(updateFileContent({ filePath: sourcePath, content: newContent }));
             }
         } catch (e) { alert("관계 삭제 실패: " + e.message); } finally { setIsLoading(false); }
+    };
+
+    // 💡 내부 코드 조작 API 호출 함수
+    const handleGenerateSubmit = async () => {
+        if (!genName.trim() || !genDataType.trim()) return alert("타입과 이름을 모두 입력해주세요!");
+        try {
+            setIsLoading(true);
+            const payload = {
+                className: selectedNode.label,
+                targetType: genTargetType,
+                accessModifier: genAccessModifier,
+                dataType: genDataType,
+                name: genName,
+                initialValue: genInitialValue, 
+                parameters: genParameters,     
+                body: genBody                  
+            };
+
+            await generateCodeComponentApi(workspaceId, activeProject, activeBranch || 'master', payload);
+            
+            alert(`✨ ${genTargetType === 'VARIABLE' ? '변수가' : '메서드가'} 성공적으로 추가되었습니다!`);
+            setIsGenerateModalOpen(false);
+            
+            // 폼 초기화
+            setGenName(''); setGenInitialValue(''); setGenParameters(''); setGenBody(''); setGenDataType('String');
+
+            await fetchAndLayoutCodeMap(true); 
+
+            let filePath = selectedNode.id;
+            if (!filePath.endsWith('.java')) filePath += '.java';
+            if (activeFileId === filePath || isSplit) {
+                const newContent = await fetchFileContentApi(workspaceId, activeProject, activeBranch || 'master', filePath);
+                dispatch(updateFileContent({ filePath: filePath, content: newContent }));
+            }
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const dependencies = useMemo(() => {
@@ -358,9 +405,15 @@ export default function CodeMap() {
 
     const panelSizeClass = isSplit ? "absolute right-4 top-4 w-[280px] max-h-[calc(100%-2rem)]" : "absolute right-10 top-10 w-[340px] max-h-[calc(100%-5rem)]";
 
+    if (!codeMapMode) return null;
+
+    const wrapperClass = isFull 
+        ? "absolute inset-0 z-[500] flex flex-col w-full h-full bg-[#fafafa]" 
+        : "flex-1 flex flex-col relative w-full h-full min-h-0 bg-[#fafafa]";
+
     return (
-        <div className="flex-1 flex flex-col relative w-full h-full min-h-0 bg-[#fafafa]">
-            <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0 z-50">
+        <div className={wrapperClass}>
+            <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shrink-0 z-50 shadow-sm">
                 <div className="flex items-center gap-4">
                     <h2 className="text-[15px] font-extrabold text-gray-900">Architecture Map (OOP)</h2>
                     {isLoading ? (
@@ -369,12 +422,21 @@ export default function CodeMap() {
                         <div className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded flex items-center gap-1"><VscFile /> 총 {rfNodes.length}개 컴포넌트 감지됨</div>
                     )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                     <button onClick={() => setIsModalOpen(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold shadow-sm flex items-center gap-1 transition-colors">
                         <VscAdd size={14}/> 새 컴포넌트
                     </button>
                     <button onClick={() => fetchAndLayoutCodeMap(true)} className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 rounded text-gray-700 transition-colors text-xs font-bold shadow-sm flex items-center gap-1">
                         <VscRefresh size={14}/> 새로고침
+                    </button>
+                    <button 
+                        onClick={() => {
+                            dispatch(closeCodeMap());
+                            if (isMapTab) dispatch(closeFile(activeFileId));
+                        }} 
+                        className="ml-2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors" title="코드맵 닫기"
+                    >
+                        <VscClose size={20}/>
                     </button>
                 </div>
             </div>
@@ -395,7 +457,7 @@ export default function CodeMap() {
                     </ReactFlow>
                 </div>
 
-                {/* 우클릭 메뉴들... (생략 없음) */}
+                {/* 캔버스 배경 우클릭 메뉴 */}
                 {contextMenuPos && (
                     <div className="fixed bg-white border border-gray-200 shadow-xl rounded-lg py-1.5 w-48 z-[9999]" style={{ top: contextMenuPos.y, left: contextMenuPos.x }}>
                         <div className="px-4 py-2 hover:bg-blue-50 hover:text-blue-700 cursor-pointer text-[13px] font-bold text-gray-700 flex items-center gap-2 transition-colors" onClick={() => { setContextMenuPos(null); setIsModalOpen(true); }}>
@@ -404,6 +466,7 @@ export default function CodeMap() {
                     </div>
                 )}
 
+                {/* 노드(클래스) 우클릭 메뉴 */}
                 {nodeContextMenu && (
                     <div className="fixed bg-white border border-gray-200 shadow-xl rounded-lg py-1.5 w-48 z-[9999]" style={{ top: nodeContextMenu.y, left: nodeContextMenu.x }}>
                         <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="text-xs font-bold text-gray-600 truncate block">{nodeContextMenu.node.data.label}</span></div>
@@ -413,6 +476,7 @@ export default function CodeMap() {
                     </div>
                 )}
 
+                {/* 선(엣지) 우클릭 메뉴 */}
                 {edgeContextMenu && (
                     <div className="fixed bg-white border border-gray-200 shadow-xl rounded-lg py-1.5 w-48 z-[9999]" style={{ top: edgeContextMenu.y, left: edgeContextMenu.x }}>
                         <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="text-[11px] font-bold text-gray-500 block">의존성 관계 ({edgeContextMenu.edge.data?.relationType || 'IMPORT'})</span></div>
@@ -422,9 +486,74 @@ export default function CodeMap() {
                     </div>
                 )}
 
-                {/* 모달들... (생략 없음) */}
-                {isModalOpen && (
-                    <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
+                {/* 💡 [FIX] 내부 코드 조작 (변수/메서드 추가) 모달 - Portal 적용됨! */}
+                {isGenerateModalOpen && createPortal(
+                    <div className="fixed inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-[440px] flex flex-col overflow-hidden animate-fade-in-up">
+                            <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                                <h3 className="font-extrabold text-gray-800 flex items-center gap-2">
+                                    {genTargetType === 'VARIABLE' ? <VscSymbolVariable className="text-indigo-600" size={18}/> : <VscSymbolMethod className="text-green-600" size={18}/>}
+                                    {genTargetType === 'VARIABLE' ? '멤버 변수 추가' : '멤버 메서드 추가'}
+                                </h3>
+                                <button onClick={() => setIsGenerateModalOpen(false)} className="text-gray-400 hover:text-red-500 transition-colors"><VscClose size={20}/></button>
+                            </div>
+                            <div className="p-6 flex flex-col gap-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                                <div className="bg-blue-50 text-blue-700 text-[11px] font-bold px-3 py-2 rounded-lg border border-blue-100 flex items-center gap-2 shrink-0">
+                                    <VscFile size={14}/> 대상 클래스: {selectedNode?.label}
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-[12px] font-bold text-gray-600 mb-1.5">접근 제어자</label>
+                                        <select value={genAccessModifier} onChange={(e) => setGenAccessModifier(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                                            <option value="private">private</option>
+                                            <option value="protected">protected</option>
+                                            <option value="public">public</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[12px] font-bold text-gray-600 mb-1.5">반환/데이터 타입</label>
+                                        <input type="text" placeholder="예: String, void" value={genDataType} onChange={(e) => setGenDataType(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm font-mono focus:ring-1 focus:ring-blue-500 outline-none" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-[12px] font-bold text-gray-600 mb-1.5">{genTargetType === 'VARIABLE' ? '변수명' : '메서드명'}</label>
+                                    <input type="text" placeholder={genTargetType === 'VARIABLE' ? "예: count" : "예: calculateSum"} value={genName} onChange={(e) => setGenName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))} className="w-full border border-gray-300 rounded-lg p-2.5 text-sm font-mono focus:ring-1 focus:ring-blue-500 outline-none" />
+                                </div>
+
+                                {/* 변수용 추가 폼 */}
+                                {genTargetType === 'VARIABLE' && (
+                                    <div>
+                                        <label className="block text-[12px] font-bold text-gray-600 mb-1.5">초기값 (선택)</label>
+                                        <input type="text" placeholder='예: 100 또는 "홍길동"' value={genInitialValue} onChange={(e) => setGenInitialValue(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2.5 text-sm font-mono focus:ring-1 focus:ring-blue-500 outline-none" />
+                                    </div>
+                                )}
+
+                                {/* 메서드용 추가 폼 */}
+                                {genTargetType === 'METHOD' && (
+                                    <>
+                                        <div>
+                                            <label className="block text-[12px] font-bold text-gray-600 mb-1.5">파라미터 (선택, 콤마로 구분)</label>
+                                            <input type="text" placeholder="예: String name, int age" value={genParameters} onChange={(e) => setGenParameters(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2.5 text-sm font-mono focus:ring-1 focus:ring-blue-500 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[12px] font-bold text-gray-600 mb-1.5">메서드 내용 (선택)</label>
+                                            <textarea placeholder="예: this.name = name;&#10;return true;" value={genBody} onChange={(e) => setGenBody(e.target.value)} rows={3} className="w-full border border-gray-300 rounded-lg p-2.5 text-sm font-mono focus:ring-1 focus:ring-blue-500 outline-none custom-scrollbar resize-none" />
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            <div className="bg-gray-50 p-4 border-t border-gray-100 flex justify-end gap-2 shrink-0">
+                                <button onClick={() => setIsGenerateModalOpen(false)} className="px-4 py-2 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-lg">취소</button>
+                                <button onClick={handleGenerateSubmit} disabled={!genName.trim() || isLoading} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg flex items-center gap-1">주입하기</button>
+                            </div>
+                        </div>
+                    </div>,
+                    document.body
+                )}
+
+                {/* 💡 [FIX] 기본 새 컴포넌트 모달 - Portal 적용됨! */}
+                {isModalOpen && createPortal(
+                    <div className="fixed inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
                         <div className="bg-white rounded-xl shadow-2xl w-[400px] flex flex-col overflow-hidden animate-fade-in-up">
                             <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
                                 <h3 className="font-extrabold text-gray-800 flex items-center gap-2"><VscSymbolClass className="text-blue-600" size={18} /> 새 자바 컴포넌트 생성</h3>
@@ -456,11 +585,13 @@ export default function CodeMap() {
                                 <button onClick={handleCreateComponentSubmit} disabled={!newCompName.trim() || isLoading} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg flex items-center gap-1">생성</button>
                             </div>
                         </div>
-                    </div>
+                    </div>,
+                    document.body
                 )}
 
-                {pendingRelation && (
-                    <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
+                {/* 💡 [FIX] 관계 주입 모달 - Portal 적용됨! */}
+                {pendingRelation && createPortal(
+                    <div className="fixed inset-0 bg-black/40 z-[9999] flex items-center justify-center backdrop-blur-sm">
                         <div className="bg-white rounded-xl shadow-2xl w-[420px] flex flex-col overflow-hidden animate-fade-in-up">
                             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 flex justify-between items-center text-white">
                                 <h3 className="font-extrabold flex items-center gap-2"><VscLink size={18} /> 객체지향 관계 주입</h3>
@@ -503,10 +634,11 @@ export default function CodeMap() {
                                 </button>
                             </div>
                         </div>
-                    </div>
+                    </div>,
+                    document.body
                 )}
 
-                {/* 범례 및 사이드패널... (생략 없음) */}
+                {/* 하단 맵 범례 (Legend) */}
                 <div className="absolute left-4 bottom-4 bg-white/95 backdrop-blur-md p-4 rounded-xl border border-gray-200 shadow-lg z-10 flex flex-col pointer-events-none w-[360px]">
                     <div className="text-[12px] font-extrabold text-gray-800 border-b border-gray-100 pb-2 mb-3 flex items-center gap-1.5">🎨 아키텍처 맵 범례 (Legend)</div>
                     <div className="flex gap-4">
@@ -528,6 +660,7 @@ export default function CodeMap() {
                     </div>
                 </div>
 
+                {/* 우측 컴포넌트 개요 패널 */}
                 {selectedNode && (
                     <div className={`${panelSizeClass} bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)] rounded-2xl z-[100] flex flex-col overflow-hidden animate-fade-in border border-gray-100`}>
                         <div className={`p-6 overflow-y-auto custom-scrollbar flex-1`}>
@@ -539,6 +672,7 @@ export default function CodeMap() {
                                         <div className="animate-pulse flex flex-col gap-2 mt-2"><div className="h-2.5 bg-blue-200/50 rounded w-full"></div><div className="h-2.5 bg-blue-200/50 rounded w-5/6"></div><div className="h-2.5 bg-blue-200/50 rounded w-4/6"></div></div>
                                     ) : (<div className="text-[11px] text-gray-700 leading-relaxed font-semibold whitespace-pre-wrap">{aiSummary}</div>)}
                                 </div>
+
                                 <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
                                     <div className="text-[10px] font-bold text-gray-400 mb-0.5">파일 이름</div>
                                     <div className="text-[13px] font-bold text-blue-600 truncate" title={selectedNode.label}>{selectedNode.label}.java</div>
@@ -547,6 +681,26 @@ export default function CodeMap() {
                                         <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded uppercase">{selectedNode.role}</span>
                                     </div>
                                 </div>
+
+                                {/* 내부 코드 조작 버튼 */}
+                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 mb-2">
+                                        <VscAdd /> 클래스 내부 구조 조작
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => { setGenTargetType('VARIABLE'); setGenAccessModifier('private'); setIsGenerateModalOpen(true); }} 
+                                            className="flex-1 py-2 bg-white border border-gray-200 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg text-[11px] font-bold text-gray-600 transition-all shadow-sm flex flex-col items-center gap-1">
+                                            <VscSymbolVariable size={16} /> 변수 추가
+                                        </button>
+                                        <button 
+                                            onClick={() => { setGenTargetType('METHOD'); setGenAccessModifier('public'); setIsGenerateModalOpen(true); }} 
+                                            className="flex-1 py-2 bg-white border border-gray-200 hover:border-green-400 hover:text-green-600 hover:bg-green-50 rounded-lg text-[11px] font-bold text-gray-600 transition-all shadow-sm flex flex-col items-center gap-1">
+                                            <VscSymbolMethod size={16} /> 메서드 추가
+                                        </button>
+                                    </div>
+                                </div>
+
                                 <div>
                                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 mb-2"><VscLink className="rotate-45" /> 의존하고 있는 컴포넌트 (Imports)</div>
                                     {dependencies.imports.length > 0 ? (
@@ -557,6 +711,7 @@ export default function CodeMap() {
                                         </div>
                                     ) : (<div className="text-[10px] text-gray-400">외부 의존성이 없습니다.</div>)}
                                 </div>
+                                
                                 <div>
                                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 mb-2"><VscLink className="-rotate-45" /> 이 컴포넌트를 호출하는 곳 (Imported By)</div>
                                     {dependencies.importedBy.length > 0 ? (

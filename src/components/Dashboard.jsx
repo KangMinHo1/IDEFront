@@ -1,15 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { VscAdd, VscFolderOpened, VscAccount, VscSignOut } from "react-icons/vsc";
-import { getMyWorkspacesApi, getUserProfileApi } from '../utils/api';
-import { useAuth } from '../utils/AuthContext'; // 💡 로그아웃 처리를 위해 가져옵니다
+import { VscAdd, VscFolderOpened, VscAccount, VscSignOut, VscMail } from "react-icons/vsc";
+import { 
+    getMyWorkspacesApi, 
+    getUserProfileApi,
+    fetchPendingInvitationsApi,     // 💡 신규 API
+    acceptWorkspaceInvitationApi,   // 💡 신규 API
+    rejectWorkspaceInvitationApi    // 💡 신규 API
+} from '../utils/api';
+import { useAuth } from '../utils/AuthContext'; 
 
 export default function Dashboard() {
     const navigate = useNavigate();
-    const { user, logout } = useAuth(); // 💡 AuthContext 활용
+    const { user, logout } = useAuth(); 
     
     const [workspaces, setWorkspaces] = useState([]);
-    const [userProfile, setUserProfile] = useState(null); // 유저 정보 상태 추가
+    const [invitations, setInvitations] = useState([]); // 💡 초대장 목록 상태 추가
+    const [userProfile, setUserProfile] = useState(null); 
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -18,13 +25,15 @@ export default function Dashboard() {
 
     const loadDashboardData = async () => {
         try {
-            // 💡 1. 현재 로그인한 유저의 정보(닉네임, 이메일)를 가져옵니다.
             if (user && user.id) {
                 const profile = await getUserProfileApi(user.id);
                 setUserProfile(profile);
+
+                // 💡 [NEW] 초대장 목록 가져오기
+                const invList = await fetchPendingInvitationsApi(user.id);
+                setInvitations(invList || []);
             }
             
-            // 💡 2. 워크스페이스 목록을 가져옵니다.
             const list = await getMyWorkspacesApi();
             setWorkspaces(list || []);
         } catch (e) {
@@ -45,17 +54,39 @@ export default function Dashboard() {
         }
     };
 
-    // 💡 로그아웃 처리 함수
     const handleLogout = () => {
         if(window.confirm("정말 로그아웃 하시겠습니까?")) {
-            logout(); // 로컬스토리지 토큰 삭제 및 상태 변경
-            navigate('/login'); // 로그인 화면으로 쫓아냅니다
+            logout(); 
+            navigate('/login'); 
+        }
+    };
+
+    // 💡 [NEW] 초대 수락 처리
+    const handleAcceptInvite = async (workspaceId) => {
+        try {
+            await acceptWorkspaceInvitationApi(workspaceId, user.id);
+            alert("초대를 수락했습니다! 이제 워크스페이스에 참여할 수 있습니다.");
+            loadDashboardData(); // 화면(초대장 및 워크스페이스 목록) 새로고침
+        } catch (e) {
+            alert("수락 실패: " + e.message);
+        }
+    };
+
+    // 💡 [NEW] 초대 거절 처리
+    const handleRejectInvite = async (workspaceId) => {
+        if (!window.confirm("정말 이 초대를 거절하시겠습니까?")) return;
+        try {
+            await rejectWorkspaceInvitationApi(workspaceId, user.id);
+            alert("초대를 거절했습니다.");
+            loadDashboardData(); // 화면 새로고침
+        } catch (e) {
+            alert("거절 실패: " + e.message);
         }
     };
 
     return (
         <div className="min-h-screen bg-[#1e1e1e] text-gray-300 p-10 font-sans">
-            {/* 💡 헤더 영역 (프로필 & 로그아웃 버튼 추가) */}
+            {/* 헤더 영역 */}
             <div className="flex justify-between items-center mb-10">
                 <h1 className="text-3xl font-bold text-white flex items-center gap-3">
                     <span className="text-blue-500">WebIDE</span> Dashboard
@@ -72,7 +103,7 @@ export default function Dashboard() {
                                 <span className="text-xs text-gray-500 leading-tight">{userProfile.email}</span>
                             </div>
                         </div>
-                        <div className="w-px h-8 bg-gray-700"></div> {/* 구분선 */}
+                        <div className="w-px h-8 bg-gray-700"></div>
                         <button 
                             onClick={handleLogout}
                             className="flex items-center gap-2 text-sm font-bold text-gray-400 hover:text-red-400 transition-colors"
@@ -84,14 +115,48 @@ export default function Dashboard() {
                 )}
             </div>
 
-            {/* 메인 콘텐츠 영역 */}
+            {/* 💡 [NEW] 대기 중인 초대장 섹션 (초대장이 있을 때만 보임) */}
+            {invitations.length > 0 && (
+                <div className="mb-10 animate-fade-in-up">
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <VscMail className="text-indigo-400" size={22} /> 대기 중인 초대 ({invitations.length})
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {invitations.map(inv => (
+                            <div key={inv.workspaceId} className="bg-indigo-900/20 border border-indigo-500/30 rounded-xl p-5 flex flex-col gap-4 relative overflow-hidden group">
+                                <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500"></div>
+                                <div>
+                                    <h3 className="text-[16px] font-bold text-white truncate">{inv.workspaceName}</h3>
+                                    <p className="text-[12px] text-indigo-200/70 mt-1">팀 워크스페이스에 초대되었습니다.</p>
+                                </div>
+                                <div className="flex gap-2 mt-1">
+                                    <button 
+                                        onClick={() => handleAcceptInvite(inv.workspaceId)}
+                                        className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-sm font-bold transition shadow-sm"
+                                    >
+                                        참여하기
+                                    </button>
+                                    <button 
+                                        onClick={() => handleRejectInvite(inv.workspaceId)}
+                                        className="flex-1 bg-[#333] hover:bg-[#444] text-gray-300 py-2 rounded-lg text-sm font-bold transition border border-gray-700"
+                                    >
+                                        거절
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* 메인 워크스페이스 콘텐츠 영역 */}
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
                 <div 
                     onClick={() => navigate('/new')}
-                    className="border-2 border-dashed border-gray-600 rounded-lg flex flex-col items-center justify-center h-40 cursor-pointer hover:border-blue-500 hover:text-blue-500 transition group"
+                    className="border-2 border-dashed border-gray-600 rounded-lg flex flex-col items-center justify-center h-40 cursor-pointer hover:border-blue-500 hover:text-blue-500 transition group bg-[#252526]/50"
                 >
                     <VscAdd className="text-4xl mb-2 text-gray-500 group-hover:text-blue-500 transition-colors" />
-                    <span className="font-semibold">New Workspace</span>
+                    <span className="font-semibold text-sm">New Workspace</span>
                 </div>
 
                 {loading ? (
@@ -117,8 +182,8 @@ export default function Dashboard() {
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isTeam ? 'bg-blue-900/50 text-blue-400' : 'bg-gray-800 text-gray-400'}`}>
                                     {isTeam ? 'TEAM' : 'SOLO'}
                                 </span>
-                                <div className="opacity-0 group-hover:opacity-100 transition text-blue-400 text-sm font-bold">
-                                    Open &rarr;
+                                <div className="opacity-0 group-hover:opacity-100 transition text-blue-400 text-sm font-bold flex items-center gap-1">
+                                    Open <span>&rarr;</span>
                                 </div>
                             </div>
                         </div>
