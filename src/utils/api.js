@@ -60,10 +60,10 @@ export const getMyWorkspacesApi = async (userId = getCurrentUserId()) => {
   return await response.json();
 };
 
-export const createWorkspaceApi = async (name, path = "", userId = getCurrentUserId(), type = "PERSONAL") => {
+export const createWorkspaceApi = async (name, path = "", userId = getCurrentUserId()) => {
   const response = await authFetch(`${API_BASE}`, {
     method: "POST",
-    body: JSON.stringify({ userId: userId.toString(), name, path, type }), 
+    body: JSON.stringify({ userId: userId.toString(), name, path, type: "PERSONAL" }), 
   });
   if (!response.ok) throw new Error("워크스페이스 생성 실패");
   return await response.json();
@@ -81,6 +81,59 @@ export const createProjectInWorkspaceApi = async (workspaceId, projectName, lang
     body: JSON.stringify({ workspaceId, projectName, language, description, gitUrl }),
   });
   if (!response.ok) throw new Error("프로젝트 생성 실패");
+};
+
+// ============================================================================
+// 👥 팀원 초대 및 멤버 관련 API
+// ============================================================================
+
+export const inviteWorkspaceMemberApi = async (workspaceId, email) => {
+  const response = await authFetch(`${API_BASE}/${workspaceId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email }), 
+  });
+  if (!response.ok) throw new Error("팀원 초대에 실패했습니다.");
+  
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.indexOf("application/json") !== -1) {
+    return await response.json();
+  } else {
+    return await response.text();
+  }
+};
+
+export const acceptWorkspaceInvitationApi = async (workspaceId) => {
+  const response = await authFetch(`${API_BASE}/${workspaceId}/accept`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error("워크스페이스 초대 수락에 실패했습니다.");
+  
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.indexOf("application/json") !== -1) {
+    return await response.json();
+  } else {
+    return await response.text();
+  }
+};
+
+export const rejectWorkspaceInvitationApi = async (workspaceId) => {
+  const response = await authFetch(`${API_BASE}/${workspaceId}/reject`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error("워크스페이스 초대 거절에 실패했습니다.");
+  return true;
+};
+
+export const fetchPendingInvitationsApi = async (userId = getCurrentUserId()) => {
+  const response = await authFetch(`${API_BASE}/invitations?userId=${userId}`);
+  if (!response.ok) throw new Error("초대받은 목록을 불러오는 데 실패했습니다.");
+  return await response.json();
+};
+
+export const getWorkspaceMembersApi = async (workspaceId) => {
+  const response = await authFetch(`${API_BASE}/${workspaceId}/members`);
+  if (!response.ok) throw new Error("워크스페이스 멤버 목록을 불러오는 데 실패했습니다.");
+  return await response.json();
 };
 
 // ============================================================================
@@ -282,6 +335,10 @@ export const abortMergeApi = async (workspaceId, projectName, branchName) => {
     if (!response.ok) throw new Error("병합 취소 실패");
 };
 
+// ============================================================================
+// 🗺️ CodeMap 관련 API
+// ============================================================================
+
 export const createCodeMapComponentApi = async (workspaceId, projectName, branchName, name, type) => {
     const response = await authFetch(`http://localhost:8080/api/codemap/components`, {
         method: 'POST',
@@ -309,6 +366,25 @@ export const deleteCodeMapRelationApi = async (workspaceId, projectName, branchN
     return await response.text();
 };
 
+export const generateCodeComponentApi = async (workspaceId, projectName, branchName, payload) => {
+    const response = await authFetch(`http://localhost:8080/api/codemap/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ workspaceId, projectName, branchName, ...payload })
+    });
+    if (!response.ok) throw new Error("코드 컴포넌트 생성(Generate)에 실패했습니다.");
+    
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.indexOf("application/json") !== -1) {
+        return await response.json();
+    } else {
+        return await response.text();
+    }
+};
+
+// ============================================================================
+// 🤖 AI 관련 API
+// ============================================================================
+
 export const fetchAiAssistApi = async (payload) => {
     const response = await authFetch(`http://localhost:8080/api/ai/assist`, {
         method: 'POST',
@@ -327,57 +403,39 @@ export const fetchAiAutocompleteApi = async (payload) => {
     return await response.text();
 };
 
-export const generateCodeComponentApi = async (workspaceId, projectName, branchName, payload) => {
-    const response = await authFetch(`http://localhost:8080/api/codemap/generate`, {
+// ============================================================================
+// 💡 가상 뷰 (자료 재배치) AI 연동 API
+// ============================================================================
+
+export const fetchVirtualViewsApi = async (workspaceId, projectName) => {
+    const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/projects/${projectName}/views`);
+    if (!response.ok) throw new Error("가상 뷰 목록을 불러오지 못했습니다.");
+    return await response.json();
+};
+
+export const generateVirtualViewApi = async (workspaceId, projectName, prompt) => {
+    const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/projects/${projectName}/views/generate`, {
         method: 'POST',
-        body: JSON.stringify({ workspaceId, projectName, branchName, ...payload })
+        body: JSON.stringify({ prompt })
     });
-    if (!response.ok) {
-        const errMsg = await response.text();
-        throw new Error(errMsg || "코드 주입 실패");
-    }
-    return await response.text();
-};
-
-export const inviteWorkspaceMemberApi = async (workspaceId, email) => {
-    const response = await authFetch(`${API_BASE}/invite`, {
-        method: "POST",
-        body: JSON.stringify({ workspaceId, email })
-    });
-    if (!response.ok) {
-        const errMsg = await response.text();
-        throw new Error(errMsg || "초대 실패");
-    }
-    return await response.text();
-};
-
-export const fetchPendingInvitationsApi = async (userId = getCurrentUserId()) => {
-    const response = await authFetch(`${API_BASE}/invitations?userId=${userId}`);
-    if (!response.ok) throw new Error("초대 목록을 불러오지 못했습니다.");
+    if (!response.ok) throw new Error("AI 가상 뷰 생성에 실패했습니다.");
     return await response.json();
 };
 
-export const acceptWorkspaceInvitationApi = async (workspaceId, userId = getCurrentUserId()) => {
-    const response = await authFetch(`${API_BASE}/${workspaceId}/accept?userId=${userId}`, { method: 'POST' });
-    if (!response.ok) throw new Error("초대 수락 실패");
-    return await response.text();
+export const deleteVirtualViewApi = async (workspaceId, projectName, viewId) => {
+    const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/projects/${projectName}/views/${viewId}`, {
+        method: 'DELETE'
+    });
+    if (!response.ok) throw new Error("뷰 삭제에 실패했습니다.");
+    return true;
 };
 
-export const rejectWorkspaceInvitationApi = async (workspaceId, userId = getCurrentUserId()) => {
-    const response = await authFetch(`${API_BASE}/${workspaceId}/reject?userId=${userId}`, { method: 'POST' });
-    if (!response.ok) throw new Error("초대 거절 실패");
-    return await response.text();
-};
+// ============================================================================
+// 💬 채팅 관련 API (TeamIdeMain.jsx 에러 해결)
+// ============================================================================
 
-export const getWorkspaceMembersApi = async (workspaceId) => {
-    const response = await authFetch(`${API_BASE}/${workspaceId}/members`);
-    if (!response.ok) throw new Error("팀원 목록을 불러오지 못했습니다.");
-    return await response.json();
-};
-
-// 💡 [수정됨] userId를 추가로 받아서 내 메시지만 필터링하도록 백엔드에 요청합니다!
-export const fetchChatHistoryApi = async (workspaceId, userId) => {
-    const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/chat?userId=${userId}`);
+export const fetchChatHistoryApi = async (workspaceId) => {
+    const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/chat`);
     if (!response.ok) throw new Error("채팅 내역을 불러오지 못했습니다.");
     return await response.json();
 };
