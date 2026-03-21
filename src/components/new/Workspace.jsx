@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkspaceWizardStore } from '../../store/workspaceWizardStore';
-// 💡 [수정] 아이콘 목록에 VscClose 추가
-import { VscFolder, VscAccount, VscOrganization, VscCopy, VscClose } from "react-icons/vsc";
+// 💡 [수정] 아이콘 목록에 VscCheck, VscSparkle 추가
+import { VscFolder, VscAccount, VscOrganization, VscCopy, VscClose, VscCheck, VscSparkle } from "react-icons/vsc";
 import PathSelectionModal from './PathSelectionModal';
 
 export default function Workspace() {
@@ -10,12 +10,14 @@ export default function Workspace() {
   
   const { 
     wsName, wsDesc, wsPath, wsType, 
-    // 💡 [수정] 스토어에서 removeEmail과 reset 함수 꺼내오기
     invitedEmails, setData, setStep, addEmail, removeEmail, reset 
   } = useWorkspaceWizardStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [emailInput, setEmailInput] = useState("");
+  
+  // 💡 [추가] 자료 재배치 UI 토글용 껍데기 상태
+  const [useRelocation, setUseRelocation] = useState(false);
 
   const handlePathSelect = (selectedPath) => {
     setData({ wsPath: selectedPath });
@@ -85,6 +87,36 @@ export default function Workspace() {
         <p className="text-[12px] text-gray-500 font-medium ml-1 italic leading-tight">
           "{wsPath}\{wsName || 'project'}"에 프로젝트가 만들어집니다.
         </p>
+
+        {/* 💡 [추가] 자료 재배치 더미 버튼 (UI 껍데기) */}
+        <div className="pt-2">
+          <div 
+            onClick={() => setUseRelocation(!useRelocation)}
+            className={`flex items-start gap-3 p-4 border rounded-xl cursor-pointer transition-all duration-200 select-none ${
+              useRelocation 
+              ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' 
+              : 'border-gray-200 bg-white hover:bg-gray-50'
+            }`}
+          >
+            <div className="mt-0.5 shrink-0">
+              <div className={`w-5 h-5 rounded-[4px] border flex items-center justify-center transition-colors ${
+                useRelocation ? 'bg-blue-600 border-blue-600 text-white shadow-sm' : 'bg-white border-gray-300'
+              }`}>
+                {useRelocation && <VscCheck size={14} strokeWidth={1} />}
+              </div>
+            </div>
+            <div className="flex flex-col">
+              <span className={`text-[14px] font-extrabold flex items-center gap-1.5 transition-colors ${useRelocation ? 'text-blue-800' : 'text-gray-700'}`}>
+                <VscSparkle className={useRelocation ? "text-blue-600 animate-pulse" : "text-gray-400"} size={16} />
+                자료 재배치를 하시겠습니까?
+              </span>
+              <span className="text-[12px] text-gray-500 mt-1 leading-relaxed">
+                워크스페이스 생성 시 AI가 프로젝트 구조를 분석하여 가상 뷰를 미리 만들어둡니다.
+              </span>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <div className="grid grid-cols-2 gap-6 pt-2">
@@ -134,7 +166,6 @@ export default function Workspace() {
             {invitedEmails.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-4">
                 {invitedEmails.map((email, idx) => (
-                  // 💡 [수정] flex 구조로 만들고 옆에 X 모양의 삭제 버튼 추가
                   <span key={idx} className="px-3 py-1.5 bg-blue-50 text-blue-700 text-[12px] font-bold rounded-full border border-blue-200 shadow-sm animate-fade-in flex items-center gap-1.5">
                     {email}
                     <button 
@@ -165,8 +196,8 @@ export default function Workspace() {
       <div className="flex justify-end gap-3 pt-10 pb-6">
         <button 
           onClick={() => {
-            reset();          // 💡 [수정] 나가기 전에 스토어 싹 비우기!
-            navigate('/');   // 대시보드로 이동
+            reset();          
+            navigate('/');   
           }} 
           className="px-10 py-3.5 bg-white border border-gray-300 text-gray-700 font-bold text-[15px] rounded-[20px] hover:bg-gray-50 transition-all"
         >
