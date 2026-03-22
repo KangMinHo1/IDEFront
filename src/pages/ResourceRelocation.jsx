@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
     VscFolder, VscFolderOpened, VscFile, VscWand, VscCheck,
     VscChevronRight, VscChevronDown, VscArrowRight, VscChevronLeft,
-    VscTrash, VscSearch, VscSparkle, VscLoading
+    VscTrash, VscSparkle, VscLoading
 } from "react-icons/vsc";
 import { DiReact, DiJsBadge, DiPython, DiJava, DiMarkdown } from "react-icons/di";
 
@@ -151,18 +151,23 @@ export default function ResourceRelocation() {
             dispatch(setWorkspaceTree(root));
             
             if (root && root.children && root.children.length > 0) {
-                const projectName = root.children[0].name;
-                dispatch(setActiveProject(projectName));
+                // 첫 번째 프로젝트 이름을 액티브로 세팅 (표시용)
+                dispatch(setActiveProject(root.children[0].name));
 
                 try {
-                    const files = await fetchProjectFilesApi(targetId, projectName);
-                    dispatch(mergeProjectFiles({ projectName, files }));
+                    // 모든 프로젝트의 파일 구조를 한 번에 불러오기 (Promise.all 적용)
+                    await Promise.all(
+                        root.children.map(async (project) => {
+                            const files = await fetchProjectFilesApi(targetId, project.name);
+                            dispatch(mergeProjectFiles({ projectName: project.name, files }));
+                        })
+                    );
 
-                    // 💡 [수정됨] projectName 파라미터 제거, workspaceId만 넘김
+                    // 백엔드 통신 (저장된 전체 뷰 목록 가져오기)
                     const views = await fetchVirtualViewsApi(targetId);
                     setSavedViews(Array.isArray(views) ? views : (views ? [views] : []));
                 } catch (err) {
-                    console.error("데이터 로드 실패:", err);
+                    console.error("데이터 구조 로드 실패:", err);
                 }
             }
             setSelectedView(null); 
@@ -178,13 +183,10 @@ export default function ResourceRelocation() {
         if (!aiPrompt.trim() || isGenerating) return;
         setIsGenerating(true);
         try {
-            // 💡 [수정됨] 중복 방어 로직을 위해 프롬프트 내용을 viewName으로 활용 (너무 길면 20자 제한)
             const viewName = aiPrompt.length > 20 ? aiPrompt.substring(0, 20) + "..." : aiPrompt;
-            
-            // 💡 [수정됨] workspaceId, viewName, prompt 를 전달
             const newView = await generateVirtualViewApi(workspaceId, viewName, aiPrompt);
             
-            setSavedViews(prev => [newView, ...prev]); // 최신순 정렬을 위해 앞에 추가
+            setSavedViews(prev => [newView, ...prev]); 
             setSelectedView(newView);
             setAiPrompt(''); 
         } catch (error) {
@@ -211,7 +213,6 @@ export default function ResourceRelocation() {
             if (!isVirtualMode) return; 
             if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (IDE가 원본 파일 구조로 돌아갑니다)")) {
                 try {
-                    // 💡 [수정됨] projectName 불필요
                     await deactivateVirtualViewApi(workspaceId); 
                     dispatch(clearVirtualTree()); 
                     alert("성공적으로 원본 구조로 복구되었습니다.");
@@ -220,12 +221,25 @@ export default function ResourceRelocation() {
                 }
             }
         } 
-        // 가상 뷰 적용 시
+        // 💡 가상 뷰 적용 시 (JSON 파싱 로직 완벽 적용됨)
         else {
             try {
-                // 💡 [수정됨] projectName 불필요, workspaceId와 treeId만 넘김
                 await activateVirtualViewApi(workspaceId, selectedView.id); 
-                dispatch(setVirtualTree(selectedView.treeData)); 
+                
+                // 1. 백엔드에서 온 문자열(JSON)을 완벽한 객체 배열로 파싱합니다.
+                let parsedData = [];
+                if (typeof selectedView.treeDataJson === 'string') {
+                    parsedData = JSON.parse(selectedView.treeDataJson);
+                } else {
+                    parsedData = selectedView.treeDataJson || selectedView.treeData || [];
+                }
+
+                // 2. 파싱된 데이터를 Redux에 세팅합니다.
+                dispatch(setVirtualTree({
+                    name: selectedView.viewName || selectedView.name || '가상 뷰',
+                    children: parsedData
+                })); 
+
                 alert(`'${selectedView.viewName || selectedView.name || '새로운 가상'}' 뷰가 탐색기에 적용되었습니다!`);
             } catch (error) {
                 alert("뷰 적용에 실패했습니다: " + error.message);
@@ -290,7 +304,7 @@ export default function ResourceRelocation() {
                                     자료 재배치 매니저
                                     {activeProject && (
                                         <span className="text-[13px] font-bold bg-gray-800 text-white px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
-                                            <VscFolderOpened /> {activeProject}
+                                            <VscFolderOpened /> {activeProject} 외 전체
                                         </span>
                                     )}
                                 </h1>
@@ -419,7 +433,6 @@ export default function ResourceRelocation() {
                                                 {selectedView === null ? (
                                                     tree?.children ? tree.children.map(child => <OriginalTree key={child.id} node={child} />) : <div className="text-xs text-gray-400 p-4">원본 파일이 없습니다.</div>
                                                 ) : (
-                                                    // 백엔드가 JSON 문자열(treeDataJson)을 파싱해서 줬는지에 따라 방어
                                                     (typeof selectedView.treeDataJson === 'string' ? JSON.parse(selectedView.treeDataJson) : (selectedView.treeDataJson || selectedView.treeData))?.map(folder => <VirtualFolderTree key={folder.id || folder.name} folder={folder} />)
                                                 )}
                                             </div>
