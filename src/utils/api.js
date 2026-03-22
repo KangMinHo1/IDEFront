@@ -383,33 +383,35 @@ export const fetchChatHistoryApi = async (workspaceId, userId) => {
 
 
 // ============================================================================
-// ✨ [NEW] 자료 재배치 (가상 뷰) API (rearrange-controller 연동)
+// ✨ [NEW] 자료 재배치 (가상 뷰) API (rearrange-controller 연동 완벽 동기화)
 // ============================================================================
 
-// 💡 [수정] 빈 응답 에러 방지 처리 추가
+// 💡 백엔드 GET /api/workspaces/{workspaceId}/rearrange 매핑 (목록 전체 불러오기)
 export const fetchVirtualViewsApi = async (workspaceId) => {
-    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/active`);
+    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange`);
     if (!response.ok) throw new Error("가상 뷰 목록을 불러오지 못했습니다.");
     
     const text = await response.text();
-    if (!text) return []; // 데이터가 아예 비어있으면 빈 배열 리턴
-    
-    try {
-        return JSON.parse(text);
-    } catch (e) {
-        return []; // JSON 파싱 에러 방어
-    }
+    if (!text) return []; 
+    try { return JSON.parse(text); } catch (e) { return []; }
 };
 
-export const generateVirtualViewApi = async (workspaceId, projectName, prompt, userId = getCurrentUserId()) => {
+// 💡 백엔드 RearrangeRequest DTO에 맞춰 workspaceId, viewName, prompt 전달!
+export const generateVirtualViewApi = async (workspaceId, viewName, prompt) => {
     const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/generate`, {
         method: 'POST',
-        body: JSON.stringify({ projectName, prompt, userId })
+        // 백엔드 엔티티의 필드명과 정확히 일치시킵니다. (projectName은 제외됨)
+        body: JSON.stringify({ workspaceId, viewName, prompt }) 
     });
-    if (!response.ok) throw new Error("AI 가상 뷰 생성에 실패했습니다.");
+    
+    if (!response.ok) {
+        const errMsg = await response.text();
+        throw new Error(errMsg || "AI 가상 뷰 생성에 실패했습니다.");
+    }
     return await response.json();
 };
 
+// 💡 (주의) 백엔드 컨트롤러에 Delete API가 아직 없다면 404가 날 수 있습니다.
 export const deleteVirtualViewApi = async (workspaceId, viewId) => {
     const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${viewId}`, {
         method: 'DELETE'
@@ -418,15 +420,17 @@ export const deleteVirtualViewApi = async (workspaceId, viewId) => {
     return true;
 };
 
-export const activateVirtualViewApi = async (workspaceId, projectName, viewId) => {
-    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${viewId}/activate`, {
+// 💡 특정 가상 트리를 에디터에 적용
+export const activateVirtualViewApi = async (workspaceId, treeId) => { 
+    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${treeId}/activate`, {
         method: 'POST'
     });
     if (!response.ok) throw new Error("가상 뷰 활성화(Activate)에 실패했습니다.");
     return true;
 };
 
-export const deactivateVirtualViewApi = async (workspaceId, projectName) => {
+// 💡 원본 구조로 복구
+export const deactivateVirtualViewApi = async (workspaceId) => { 
     const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/deactivate`, {
         method: 'POST'
     });

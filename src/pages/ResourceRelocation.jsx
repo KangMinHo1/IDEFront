@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { 
-    VscFolder, VscFolderOpened, VscFile, VscWand, VscCheck, VscClose,
+    VscFolder, VscFolderOpened, VscFile, VscWand, VscCheck,
     VscChevronRight, VscChevronDown, VscArrowRight, VscChevronLeft,
     VscTrash, VscSearch, VscSparkle, VscLoading
 } from "react-icons/vsc";
@@ -122,15 +122,13 @@ export default function ResourceRelocation() {
     
     // Redux 상태
     const { tree, activeProject, workspaceId, virtualTree } = useSelector(state => state.fileSystem);
-    const isVirtualMode = virtualTree !== null && virtualTree !== undefined; // 현재 IDE에 가상 뷰가 씌워져 있는지 여부
+    const isVirtualMode = virtualTree !== null && virtualTree !== undefined;
 
     const [viewMode, setViewMode] = useState('list'); 
     const [workspaces, setWorkspaces] = useState([]);
     const [isLoadingWs, setIsLoadingWs] = useState(true);
 
-    // AI 및 뷰 목록 관리 상태
     const [savedViews, setSavedViews] = useState([]); 
-    // 💡 선택된 뷰 (null이면 '원본 구조'가 선택된 상태를 의미함)
     const [selectedView, setSelectedView] = useState(null); 
     const [aiPrompt, setAiPrompt] = useState(''); 
     const [isGenerating, setIsGenerating] = useState(false); 
@@ -160,14 +158,14 @@ export default function ResourceRelocation() {
                     const files = await fetchProjectFilesApi(targetId, projectName);
                     dispatch(mergeProjectFiles({ projectName, files }));
 
-                    const views = await fetchVirtualViewsApi(targetId, projectName);
-                    // 배열 형태가 아니면 빈 배열로 처리 (백엔드 응답 방어)
+                    // 💡 [수정됨] projectName 파라미터 제거, workspaceId만 넘김
+                    const views = await fetchVirtualViewsApi(targetId);
                     setSavedViews(Array.isArray(views) ? views : (views ? [views] : []));
                 } catch (err) {
                     console.error("데이터 로드 실패:", err);
                 }
             }
-            setSelectedView(null); // 진입 시 기본으로 '원본 구조' 탭 선택
+            setSelectedView(null); 
             setViewMode('detail');
         } catch (e) {
             alert("프로젝트 정보를 불러오지 못했습니다.");
@@ -180,9 +178,14 @@ export default function ResourceRelocation() {
         if (!aiPrompt.trim() || isGenerating) return;
         setIsGenerating(true);
         try {
-            const newView = await generateVirtualViewApi(workspaceId, activeProject, aiPrompt);
-            setSavedViews(prev => [...prev, newView]);
-            setSelectedView(newView); // 생성 즉시 생성된 뷰 선택
+            // 💡 [수정됨] 중복 방어 로직을 위해 프롬프트 내용을 viewName으로 활용 (너무 길면 20자 제한)
+            const viewName = aiPrompt.length > 20 ? aiPrompt.substring(0, 20) + "..." : aiPrompt;
+            
+            // 💡 [수정됨] workspaceId, viewName, prompt 를 전달
+            const newView = await generateVirtualViewApi(workspaceId, viewName, aiPrompt);
+            
+            setSavedViews(prev => [newView, ...prev]); // 최신순 정렬을 위해 앞에 추가
+            setSelectedView(newView);
             setAiPrompt(''); 
         } catch (error) {
             alert("AI 가상 뷰 생성 오류: " + error.message);
@@ -194,35 +197,36 @@ export default function ResourceRelocation() {
     const handleDeleteView = async (viewId) => {
         if(!window.confirm("이 가상 뷰를 삭제하시겠습니까?")) return;
         try {
-            await deleteVirtualViewApi(workspaceId, activeProject, viewId);
+            await deleteVirtualViewApi(workspaceId, viewId);
             setSavedViews(prev => prev.filter(v => v.id !== viewId));
-            if (selectedView?.id === viewId) setSelectedView(null); // 보고 있던 뷰를 지웠다면 원본 구조로 포커스 이동
+            if (selectedView?.id === viewId) setSelectedView(null); 
         } catch (error) {
             alert("삭제 실패: " + error.message);
         }
     };
 
-    // 💡 통합된 [적용하기] 버튼 핸들러 (Activate & Deactivate 처리)
     const handleApply = async () => {
-        // 1. '원본 구조'가 선택된 상태일 때 적용하기를 누른 경우
+        // 원본 구조 복구 시
         if (selectedView === null) {
-            if (!isVirtualMode) return; // 이미 원본이면 아무것도 안 함
+            if (!isVirtualMode) return; 
             if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (IDE가 원본 파일 구조로 돌아갑니다)")) {
                 try {
-                    await deactivateVirtualViewApi(workspaceId, activeProject); // 백엔드 통신 (Deactivate)
-                    dispatch(clearVirtualTree()); // 프론트엔드 IDE 원본 복구
+                    // 💡 [수정됨] projectName 불필요
+                    await deactivateVirtualViewApi(workspaceId); 
+                    dispatch(clearVirtualTree()); 
                     alert("성공적으로 원본 구조로 복구되었습니다.");
                 } catch (error) {
                     alert("원본 복구에 실패했습니다: " + error.message);
                 }
             }
         } 
-        // 2. 'AI 가상 뷰'가 선택된 상태일 때 적용하기를 누른 경우
+        // 가상 뷰 적용 시
         else {
             try {
-                await activateVirtualViewApi(workspaceId, activeProject, selectedView.id); // 백엔드 통신 (Activate)
-                dispatch(setVirtualTree(selectedView.treeData)); // 프론트엔드 IDE 가상 뷰 적용
-                alert(`'${selectedView.name}' 뷰가 탐색기에 적용되었습니다!`);
+                // 💡 [수정됨] projectName 불필요, workspaceId와 treeId만 넘김
+                await activateVirtualViewApi(workspaceId, selectedView.id); 
+                dispatch(setVirtualTree(selectedView.treeData)); 
+                alert(`'${selectedView.viewName || selectedView.name || '새로운 가상'}' 뷰가 탐색기에 적용되었습니다!`);
             } catch (error) {
                 alert("뷰 적용에 실패했습니다: " + error.message);
             }
@@ -235,7 +239,6 @@ export default function ResourceRelocation() {
 
             <div className="flex-1 overflow-y-auto">
                 {viewMode === 'list' ? (
-                    // 워크스페이스 선택 목록 화면 (변경 없음)
                     <div className="max-w-[1200px] w-full mx-auto py-12 px-6 flex flex-col h-full animate-fade-in">
                         <div className="flex items-center gap-3 mb-8">
                             <div className="p-3 bg-blue-100 rounded-xl text-blue-600"><VscWand size={28} /></div>
@@ -276,9 +279,7 @@ export default function ResourceRelocation() {
                         )}
                     </div>
                 ) : (
-                    // 💡 새롭게 바뀐 "대시보드 통합 형태"의 탐색기 화면
                     <div className="max-w-[1400px] w-full mx-auto py-8 px-6 flex flex-col h-full animate-fade-in">
-                        {/* 상단 헤더 바 */}
                         <div className="mb-6 flex items-center justify-between shrink-0">
                             <div className="flex items-center gap-4">
                                 <button onClick={() => setViewMode('list')} className="p-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-xl transition-colors shadow-sm">
@@ -299,10 +300,7 @@ export default function ResourceRelocation() {
                             </button>
                         </div>
 
-                        {/* 메인 대시보드 박스 */}
                         <div className="bg-white rounded-3xl shadow-lg border border-gray-200 flex flex-col overflow-hidden flex-1 mb-4">
-                            
-                            {/* 상단 AI 프롬프트 생성 영역 */}
                             <div className="p-6 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-b border-gray-200 shrink-0">
                                 <h3 className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2 mb-3">
                                     <VscSparkle className="text-blue-600" size={18} /> AI에게 새로운 분류(뷰) 생성을 요청해보세요
@@ -326,17 +324,12 @@ export default function ResourceRelocation() {
                                 </div>
                             </div>
 
-                            {/* 하단 좌우 스플릿 (뷰 목록 & 프리뷰) */}
                             <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x border-gray-200 flex-1 min-h-[500px] overflow-hidden">
-                                
-                                {/* 왼쪽: 뷰 목록 패널 (항상 노출됨!) */}
                                 <div className="w-[320px] bg-[#fafafa] flex flex-col shrink-0">
                                     <div className="px-6 py-4 border-b border-gray-200 bg-white font-extrabold text-[13px] text-gray-700 flex justify-between items-center shadow-sm z-10">
                                         저장된 뷰 목록 (Views)
                                     </div>
                                     <div className="p-4 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
-                                        
-                                        {/* 1. 실제 탐색기 원본 구조 (고정) */}
                                         <div 
                                             onClick={() => setSelectedView(null)}
                                             className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center gap-3
@@ -347,13 +340,11 @@ export default function ResourceRelocation() {
                                                 <div className={`text-[13px] font-bold ${selectedView === null ? 'text-blue-800' : 'text-gray-700'}`}>실제 탐색기 원본 구조</div>
                                                 <div className="text-[11px] text-gray-400 mt-0.5">물리적인 실제 폴더 구조</div>
                                             </div>
-                                            {/* IDE에 원본이 적용되어 있다면 뱃지 표시 */}
                                             {!isVirtualMode && <span className="px-2 py-1 bg-gray-800 text-white text-[10px] font-bold rounded-md shadow-sm">IDE 적용중</span>}
                                         </div>
 
                                         <div className="h-px bg-gray-200 my-4 mx-2"></div>
 
-                                        {/* 2. AI 가상 뷰 목록 */}
                                         <div className="px-2 pb-1 text-[11px] font-bold text-gray-400 flex justify-between">
                                             <span>AI 가상 뷰</span>
                                             <span>{savedViews.length}개</span>
@@ -373,12 +364,13 @@ export default function ResourceRelocation() {
                                             >
                                                 <div className="flex items-center gap-2 mb-1.5 pr-6">
                                                     <VscSparkle className={selectedView?.id === view.id ? 'text-indigo-600' : 'text-gray-400'} size={18} />
-                                                    <div className={`text-[13px] font-extrabold truncate ${selectedView?.id === view.id ? 'text-indigo-800' : 'text-gray-700'}`}>{view.name}</div>
+                                                    <div className={`text-[13px] font-extrabold truncate ${selectedView?.id === view.id ? 'text-indigo-800' : 'text-gray-700'}`}>
+                                                        {view.viewName || view.name || "새로운 가상 뷰"}
+                                                    </div>
                                                 </div>
                                                 <p className="text-[11px] text-gray-500 truncate pl-6 leading-tight" title={view.prompt}>{view.prompt || "AI가 생성한 가상 폴더 구조"}</p>
 
-                                                {/* 현재 IDE에 이 뷰가 켜져있다면 표시 */}
-                                                {isVirtualMode && virtualTree?.name === view.name && (
+                                                {isVirtualMode && virtualTree?.name === (view.viewName || view.name) && (
                                                     <span className="absolute top-3.5 right-3 px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded-md shadow-sm">IDE 적용중</span>
                                                 )}
 
@@ -394,18 +386,16 @@ export default function ResourceRelocation() {
                                     </div>
                                 </div>
 
-                                {/* 오른쪽: 프리뷰 및 적용 영역 */}
                                 <div className="flex-[2] bg-white flex flex-col relative bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-gray-50/20">
                                     <div className="px-8 py-4 border-b border-gray-200 bg-white flex justify-between items-center z-10 shadow-sm">
                                         <span className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2">
                                             {selectedView === null ? (
                                                 <><VscFolderOpened className="text-yellow-500" size={20}/> 원본 구조 프리뷰</>
                                             ) : (
-                                                <><VscSparkle className="text-indigo-500" size={20}/> 가상 뷰 프리뷰: <span className="text-indigo-700">{selectedView.name}</span></>
+                                                <><VscSparkle className="text-indigo-500" size={20}/> 가상 뷰 프리뷰: <span className="text-indigo-700">{selectedView.viewName || selectedView.name}</span></>
                                             )}
                                         </span>
 
-                                        {/* 우측 상단 메인 [적용하기] 버튼 */}
                                         {selectedView === null ? (
                                             isVirtualMode ? (
                                                 <button onClick={handleApply} className="px-5 py-2.5 text-[12px] font-extrabold bg-gray-800 text-white rounded-xl hover:bg-black transition-all flex items-center gap-2 shadow-md hover:shadow-lg">
@@ -423,20 +413,19 @@ export default function ResourceRelocation() {
                                         )}
                                     </div>
                                     
-                                    {/* 실제 트리 프리뷰 컨텐츠 영역 */}
                                     <div className="p-8 flex-1 overflow-y-auto custom-scrollbar">
                                         <div className="max-w-4xl mx-auto border border-gray-200 rounded-2xl p-8 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white">
                                             <div className="space-y-1">
                                                 {selectedView === null ? (
                                                     tree?.children ? tree.children.map(child => <OriginalTree key={child.id} node={child} />) : <div className="text-xs text-gray-400 p-4">원본 파일이 없습니다.</div>
                                                 ) : (
-                                                    selectedView.treeData?.children?.map(folder => <VirtualFolderTree key={folder.id} folder={folder} />)
+                                                    // 백엔드가 JSON 문자열(treeDataJson)을 파싱해서 줬는지에 따라 방어
+                                                    (typeof selectedView.treeDataJson === 'string' ? JSON.parse(selectedView.treeDataJson) : (selectedView.treeDataJson || selectedView.treeData))?.map(folder => <VirtualFolderTree key={folder.id || folder.name} folder={folder} />)
                                                 )}
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-
                             </div>
                         </div>
                     </div>
