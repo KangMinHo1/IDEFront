@@ -5,9 +5,9 @@ import { useDispatch, useSelector } from 'react-redux';
 import { 
   VscFiles, VscNewFile, VscCollapseAll, VscFile, 
   VscTrash, VscEdit, VscChevronRight, VscChevronDown, VscRocket,
-  VscRepo, VscFolder, VscNewFolder, VscRefresh
+  VscRepo, VscFolder, VscNewFolder, VscRefresh, VscSparkle
 } from "react-icons/vsc";
-import { DiReact, DiJsBadge, DiPython, DiJava } from "react-icons/di";
+import { DiReact, DiJsBadge, DiPython, DiJava, DiMarkdown } from "react-icons/di";
 
 import { openFile, closeFilesByPath, updateFileContent, setActiveProject, setWorkspaceTree, mergeProjectFiles } from '../store/slices/fileSystemSlice';
 import { startCreation, endCreation, writeToTerminal } from '../store/slices/uiSlice';
@@ -20,7 +20,8 @@ const getFileIcon = (name) => {
       case 'java': return <DiJava className="text-orange-500 text-lg" />;
       case 'py': return <DiPython className="text-blue-500 text-lg" />;
       case 'js': return <DiJsBadge className="text-yellow-400 text-lg" />;
-      case 'jsx': return <DiReact className="text-blue-400 text-lg" />;
+      case 'jsx': case 'tsx': return <DiReact className="text-blue-400 text-lg" />;
+      case 'md': return <DiMarkdown className="text-gray-500 text-lg" />;
       default: return <VscFile className="text-gray-500 text-lg" />;
     }
 };
@@ -31,29 +32,36 @@ const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, 
 
     const currentProjectName = node.type === 'project' ? node.name : projectName;
 
+    // 💡 [수정됨] AI가 응답한 VIRTUAL_FOLDER와 FILE 타입도 정상적으로 인식하도록 처리
+    const nodeType = (node.type || 'file').toLowerCase();
+    const isProject = nodeType === 'project';
+    const isFolder = nodeType === 'folder' || nodeType === 'virtual_folder';
+    const isFile = nodeType === 'file' || (!isProject && !isFolder && !node.children);
+
     const getIcon = () => {
-        if (node.type === 'project') return <VscRepo className="text-blue-600" />;
-        if (node.type === 'folder') return <VscFolder className="text-yellow-500" />;
+        if (isProject) return <VscRepo className="text-blue-600" />;
+        if (isFolder) return <VscFolder className="text-yellow-500" />;
         return getFileIcon(node.name);
     };
 
     const handleClick = async (e) => {
         e.stopPropagation();
 
-        if (node.type === 'project') {
+        if (isProject) {
             if (!isExpanded && (!node.children || node.children.length === 0)) {
                 await onExpandProject(node.name);
             }
             setIsExpanded(!isExpanded);
-        } else if (node.type === 'folder') {
+        } else if (isFolder) {
             setIsExpanded(!isExpanded);
         } else {
             onFileClick(node, currentProjectName);
         }
     };
 
-    const isSelected = activeFileId === node.id;
-    const isStartupProject = node.type === 'project' && activeProject === node.name;
+    // 가상 뷰 상태에서는 node.id가 없을 수 있으므로 realPath를 대체 키로 사용
+    const isSelected = activeFileId === (node.realPath || node.id);
+    const isStartupProject = isProject && activeProject === node.name;
 
     return (
         <div className="select-none font-sans">
@@ -66,17 +74,23 @@ const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, 
                 onClick={handleClick}
                 onContextMenu={(e) => onContextMenu(e, node)}
             >
-                <div className="flex items-center overflow-hidden">
+                <div className="flex items-center overflow-hidden group">
                     <span className="mr-1.5 opacity-60 text-gray-500 shrink-0">
-                        {(node.type === 'folder' || node.type === 'project') && (
+                        {(isFolder || isProject) && (
                             isExpanded ? <VscChevronDown size={14} /> : <VscChevronRight size={14} />
                         )}
-                        {node.type === 'file' && <span className="w-[14px] inline-block"/>}
+                        {isFile && <span className="w-[14px] inline-block"/>}
                     </span>
                     <span className="mr-1.5 shrink-0">{getIcon()}</span>
                     <span className={`truncate ${node.name.startsWith('.') ? 'opacity-50' : ''} ${isStartupProject ? 'font-bold text-blue-700' : ''}`}>
                         {node.name}
                     </span>
+                    {/* 💡 마우스 호버 시 가상 뷰의 원래 경로(realPath) 표시 */}
+                    {node.realPath && (
+                        <span className="ml-2 text-[10px] text-gray-400 font-mono opacity-0 group-hover:opacity-100 truncate max-w-[120px]">
+                            {node.realPath}
+                        </span>
+                    )}
                 </div>
                 
                 {isStartupProject && (
@@ -86,14 +100,13 @@ const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, 
                 )}
             </div>
 
-            {/* 💡 [핵심 수정] 자식 렌더링 시 $$codemap$$ 이라는 이름을 가진 요소는 아예 화면에서 지워버립니다! */}
             {isExpanded && Array.isArray(node.children) && (
                 <div>
                     {node.children
                         .filter(child => child.name !== '$$codemap$$' && !child.name.includes('$$codemap$$')) 
-                        .map(child => (
+                        .map((child, idx) => (
                         <FileTreeItem 
-                            key={child.id} 
+                            key={child.id || child.realPath || idx} 
                             node={child} 
                             depth={depth + 1} 
                             projectName={currentProjectName}
@@ -111,13 +124,18 @@ const FileTreeItem = ({ node, depth, projectName, onExpandProject, onFileClick, 
 export default function Sidebar() {
   const dispatch = useDispatch();
   
-  const { tree, activeFileId, workspaceId, activeProject, activeBranch } = useSelector(state => state.fileSystem);
+  // 💡 [추가] Redux에서 virtualTree 상태도 가져옵니다.
+  const { tree, virtualTree, activeFileId, workspaceId, activeProject, activeBranch } = useSelector(state => state.fileSystem);
   const { isSidebarVisible, pendingCreation } = useSelector(state => state.ui);
+
+  // 💡 가상 뷰가 적용 중인지 판단하는 변수
+  const isVirtualMode = virtualTree !== null && virtualTree !== undefined;
 
   const inputRef = useRef(null);
   const [contextMenu, setContextMenu] = useState(null); 
   
   const handleExpandProject = async (projectName) => {
+      if (isVirtualMode) return; // 가상 뷰 모드에서는 프로젝트 확장을 막음
       try {
           const branchToFetch = (projectName === activeProject && activeBranch) ? activeBranch : "master";
           const files = await fetchProjectFilesApi(workspaceId, projectName, branchToFetch);
@@ -128,26 +146,37 @@ export default function Sidebar() {
   };
 
   useEffect(() => {
-      if (workspaceId && activeProject) {
+      if (workspaceId && activeProject && !isVirtualMode) {
           handleExpandProject(activeProject);
       }
-  }, [activeBranch, workspaceId, activeProject]);
+  }, [activeBranch, workspaceId, activeProject, isVirtualMode]);
 
   const handleFileClick = async (node, realProjectName) => {
-      dispatch(openFile(node));
-      const targetProject = realProjectName || activeProject; 
+      let targetProject = realProjectName || activeProject; 
+      let targetFilePath = node.id || node.name;
+
+      // 💡 [핵심 로직] AI 가상 뷰의 파일인 경우, realPath를 쪼개서 진짜 프로젝트명과 파일 경로를 찾습니다!
+      if (isVirtualMode && node.realPath) {
+          const pathParts = node.realPath.split('/');
+          targetProject = pathParts[0]; // 맨 앞이 실제 프로젝트 폴더명 (예: "자바1")
+          targetFilePath = pathParts.slice(1).join('/'); // 나머지가 내부 경로 (예: "Main.java")
+      }
+
+      // 에디터에 열기 위해 노드 정보 세팅
+      const fileToOpen = { ...node, id: isVirtualMode ? node.realPath : node.id, type: 'file' };
+      dispatch(openFile(fileToOpen));
       
       try {
           const branchToFetch = (targetProject === activeProject && activeBranch) ? activeBranch : "master";
-          const content = await fetchFileContentApi(workspaceId, targetProject, branchToFetch, node.id);
-          dispatch(updateFileContent({ filePath: node.id, content: content }));
+          const content = await fetchFileContentApi(workspaceId, targetProject, branchToFetch, targetFilePath);
+          dispatch(updateFileContent({ filePath: fileToOpen.id, content: content }));
       } catch (e) {
           console.error("파일 내용 로드 실패:", e);
       }
   };
 
   const refreshWorkspace = async () => {
-      if(!workspaceId) return;
+      if(!workspaceId || isVirtualMode) return;
       try {
           const rootNode = await fetchWorkspaceProjectsApi(workspaceId);
           dispatch(setWorkspaceTree(rootNode));
@@ -195,6 +224,9 @@ export default function Sidebar() {
   const handleContextMenu = (e, node) => {
       e.preventDefault();
       e.stopPropagation();
+      // 💡 가상 뷰 상태에서는 우클릭(생성/삭제 등)을 임시로 막습니다.
+      if (isVirtualMode) return; 
+
       setContextMenu({
           x: e.clientX,
           y: e.clientY,
@@ -251,40 +283,52 @@ export default function Sidebar() {
 
   if (!isSidebarVisible) return null;
 
+  // 💡 [핵심] 가상 뷰(virtualTree)가 켜져 있으면 그걸 먼저 보여주고, 아니면 원본 트리(tree)를 보여줍니다!
+  const displayTreeChildren = isVirtualMode ? virtualTree.children : (tree?.children || []);
+
   return (
-    <div className="h-full w-full bg-[#f8f9fa] flex flex-col font-sans">
-       <div className="flex items-center justify-between px-4 h-9 border-b border-gray-200 shrink-0">
-           <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">워크스페이스 탐색기</span>
+    <div className="h-full w-full bg-[#f8f9fa] flex flex-col font-sans shadow-[inset_-1px_0_0_rgba(0,0,0,0.05)]">
+       {/* 상단 툴바 */}
+       <div className="flex items-center justify-between px-4 h-9 border-b border-gray-200 shrink-0 bg-white">
+           <span className="text-[11px] font-extrabold text-gray-700 uppercase tracking-wider">탐색기</span>
            <div className="flex gap-2 text-gray-500">
-               <VscRefresh className="cursor-pointer hover:text-black transition-colors" onClick={refreshWorkspace} title="새로고침"/>
-               
-               <VscNewFile className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'file', parentId: activeProject ? '' : 'root-folder' })); }} title="새 파일" />
-               <VscNewFolder className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'folder', parentId: activeProject ? '' : 'root-folder' })); }} title="새 폴더" />
-               
+               {!isVirtualMode && (
+                   <>
+                       <VscRefresh className="cursor-pointer hover:text-black transition-colors" onClick={refreshWorkspace} title="새로고침"/>
+                       <VscNewFile className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'file', parentId: activeProject ? '' : 'root-folder' })); }} title="새 파일" />
+                       <VscNewFolder className="cursor-pointer hover:text-black transition-colors" onClick={(e)=>{ e.stopPropagation(); dispatch(startCreation({type:'folder', parentId: activeProject ? '' : 'root-folder' })); }} title="새 폴더" />
+                   </>
+               )}
                <VscCollapseAll className="cursor-pointer hover:text-black transition-colors" title="모두 접기" />
            </div>
        </div>
-       
-       <div className="flex-1 overflow-y-auto py-2">
-          <div className="px-4 py-1 mb-2">
-                <span className="text-[11px] font-bold text-gray-500">워크스페이스 탐색</span> 
-          </div>
 
-          {tree && Array.isArray(tree.children) && tree.children.length > 0 ? (
-              tree.children.map(projectNode => (
+       {/* 💡 가상 뷰 적용 시 나타나는 눈에 띄는 배지 영역 */}
+       {isVirtualMode && (
+           <div className="flex items-center justify-between px-4 py-2 bg-indigo-50 border-b border-indigo-100 shrink-0">
+               <span className="text-[12px] font-extrabold text-indigo-700 flex items-center gap-1.5">
+                   <VscSparkle size={14} className="animate-pulse"/> AI 뷰 적용 중
+               </span>
+               <span className="text-[10px] text-indigo-400 font-bold max-w-[80px] truncate" title={virtualTree.name}>{virtualTree.name}</span>
+           </div>
+       )}
+       
+       <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+          {displayTreeChildren.length > 0 ? (
+              displayTreeChildren.map((node, idx) => (
                   <FileTreeItem 
-                      key={projectNode.id} 
-                      node={projectNode} 
+                      key={node.id || node.realPath || node.name || idx} 
+                      node={node} 
                       depth={0} 
-                      projectName={projectNode.name} 
+                      projectName={isVirtualMode ? '' : node.name} 
                       onExpandProject={handleExpandProject} 
                       onFileClick={handleFileClick}
                       onContextMenu={handleContextMenu}
                   />
               ))
           ) : (
-              <div className="p-4 text-xs text-gray-400 text-center mt-4">
-                  프로젝트가 없습니다.<br/>상단 메뉴에서 새 프로젝트를 생성해주세요.
+              <div className="p-4 text-xs text-gray-400 text-center mt-4 border border-dashed border-gray-300 mx-4 rounded-xl">
+                  {isVirtualMode ? "가상 뷰에 파일이 없습니다." : "프로젝트가 없습니다. 상단에서 생성해주세요."}
               </div>
           )}
           
@@ -301,7 +345,8 @@ export default function Sidebar() {
           )}
        </div>
 
-       {contextMenu && (
+       {/* 우클릭 컨텍스트 메뉴 (가상 뷰에서는 안 뜸) */}
+       {contextMenu && !isVirtualMode && (
            <div 
              className="fixed bg-white border border-gray-200 shadow-[0_4px_12px_rgba(0,0,0,0.1)] rounded-md py-1.5 w-48 z-[9999]"
              style={{ top: contextMenu.y, left: contextMenu.x }}

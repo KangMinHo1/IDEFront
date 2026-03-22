@@ -131,7 +131,10 @@ export default function ResourceRelocation() {
     const [savedViews, setSavedViews] = useState([]); 
     const [selectedView, setSelectedView] = useState(null); 
     const [aiPrompt, setAiPrompt] = useState(''); 
+    
+    // 💡 AI 생성 및 로딩 팝업용 상태
     const [isGenerating, setIsGenerating] = useState(false); 
+    const [loadingProgress, setLoadingProgress] = useState(0);
 
     useEffect(() => {
         if (viewMode === 'list') {
@@ -142,6 +145,24 @@ export default function ResourceRelocation() {
         }
     }, [viewMode]);
 
+    // 💡 게이지 애니메이션 로직
+    useEffect(() => {
+        let interval;
+        if (isGenerating) {
+            setLoadingProgress(0);
+            interval = setInterval(() => {
+                setLoadingProgress(prev => {
+                    if (prev >= 90) return 90; // 실제 완료 전까지는 90%에서 대기
+                    return prev + Math.floor(Math.random() * 15) + 5;
+                });
+            }, 500);
+        } else {
+            setLoadingProgress(100);
+            setTimeout(() => setLoadingProgress(0), 500);
+        }
+        return () => clearInterval(interval);
+    }, [isGenerating]);
+
     const handleSelectWorkspace = async (ws) => {
         const targetId = ws.uuid || ws.id || ws.workspaceId;
         setIsLoadingWs(true);
@@ -151,11 +172,9 @@ export default function ResourceRelocation() {
             dispatch(setWorkspaceTree(root));
             
             if (root && root.children && root.children.length > 0) {
-                // 첫 번째 프로젝트 이름을 액티브로 세팅 (표시용)
                 dispatch(setActiveProject(root.children[0].name));
 
                 try {
-                    // 모든 프로젝트의 파일 구조를 한 번에 불러오기 (Promise.all 적용)
                     await Promise.all(
                         root.children.map(async (project) => {
                             const files = await fetchProjectFilesApi(targetId, project.name);
@@ -163,7 +182,6 @@ export default function ResourceRelocation() {
                         })
                     );
 
-                    // 백엔드 통신 (저장된 전체 뷰 목록 가져오기)
                     const views = await fetchVirtualViewsApi(targetId);
                     setSavedViews(Array.isArray(views) ? views : (views ? [views] : []));
                 } catch (err) {
@@ -199,8 +217,19 @@ export default function ResourceRelocation() {
     const handleDeleteView = async (viewId) => {
         if(!window.confirm("이 가상 뷰를 삭제하시겠습니까?")) return;
         try {
+            // 💡 [수정] 방금 삭제한 뷰가 현재 IDE에 적용중인 뷰라면 자동으로 원본 복구!
+            const viewToDelete = savedViews.find(v => v.id === viewId);
+            const isDeletingActiveView = isVirtualMode && virtualTree?.name === (viewToDelete?.viewName || viewToDelete?.name);
+
             await deleteVirtualViewApi(workspaceId, viewId);
             setSavedViews(prev => prev.filter(v => v.id !== viewId));
+
+            if (isDeletingActiveView) {
+                await deactivateVirtualViewApi(workspaceId);
+                dispatch(clearVirtualTree());
+                alert("적용 중이던 가상 뷰가 삭제되어 원본 탐색기로 자동 복구되었습니다.");
+            }
+
             if (selectedView?.id === viewId) setSelectedView(null); 
         } catch (error) {
             alert("삭제 실패: " + error.message);
@@ -208,7 +237,6 @@ export default function ResourceRelocation() {
     };
 
     const handleApply = async () => {
-        // 원본 구조 복구 시
         if (selectedView === null) {
             if (!isVirtualMode) return; 
             if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (IDE가 원본 파일 구조로 돌아갑니다)")) {
@@ -220,13 +248,10 @@ export default function ResourceRelocation() {
                     alert("원본 복구에 실패했습니다: " + error.message);
                 }
             }
-        } 
-        // 💡 가상 뷰 적용 시 (JSON 파싱 로직 완벽 적용됨)
-        else {
+        } else {
             try {
                 await activateVirtualViewApi(workspaceId, selectedView.id); 
                 
-                // 1. 백엔드에서 온 문자열(JSON)을 완벽한 객체 배열로 파싱합니다.
                 let parsedData = [];
                 if (typeof selectedView.treeDataJson === 'string') {
                     parsedData = JSON.parse(selectedView.treeDataJson);
@@ -234,7 +259,6 @@ export default function ResourceRelocation() {
                     parsedData = selectedView.treeDataJson || selectedView.treeData || [];
                 }
 
-                // 2. 파싱된 데이터를 Redux에 세팅합니다.
                 dispatch(setVirtualTree({
                     name: selectedView.viewName || selectedView.name || '가상 뷰',
                     children: parsedData
@@ -250,6 +274,29 @@ export default function ResourceRelocation() {
     return (
         <div className="w-screen h-screen bg-[#f3f4f6] flex flex-col font-sans overflow-hidden relative">
             <MenuBar />
+
+            {/* 💡 AI 생성 중일 때 나타나는 로딩 팝업 오버레이 */}
+            {isGenerating && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center border border-gray-100">
+                        <div className="relative flex items-center justify-center w-20 h-20 mb-6 bg-blue-50 rounded-full">
+                            <VscSparkle className="text-blue-600 animate-pulse" size={40} />
+                            <div className="absolute inset-0 border-4 border-blue-200 rounded-full animate-spin border-t-blue-600"></div>
+                        </div>
+                        <h2 className="text-xl font-extrabold text-gray-800 mb-2">AI가 구조를 분석 중입니다</h2>
+                        <p className="text-sm text-gray-500 mb-8 text-center break-keep">
+                            수많은 파일들을 요청하신 기준에 맞춰<br/>완벽하게 재배치하고 있어요.
+                        </p>
+                        <div className="w-full bg-gray-100 rounded-full h-3 mb-2 overflow-hidden">
+                            <div 
+                                className="bg-gradient-to-r from-blue-500 to-indigo-600 h-3 rounded-full transition-all duration-500 ease-out"
+                                style={{ width: `${loadingProgress}%` }}
+                            ></div>
+                        </div>
+                        <div className="text-xs font-bold text-gray-400">{loadingProgress}% 진행됨</div>
+                    </div>
+                </div>
+            )}
 
             <div className="flex-1 overflow-y-auto">
                 {viewMode === 'list' ? (
@@ -333,7 +380,7 @@ export default function ResourceRelocation() {
                                         disabled={!aiPrompt.trim() || isGenerating}
                                         className="px-8 bg-[#111827] text-white rounded-xl text-[13px] font-bold hover:bg-black transition-all flex items-center justify-center min-w-[140px] shadow-md disabled:bg-gray-400 disabled:shadow-none"
                                     >
-                                        {isGenerating ? <VscLoading className="animate-spin" size={18} /> : "✨ AI로 생성하기"}
+                                        {isGenerating ? "생성 중..." : "✨ AI로 생성하기"}
                                     </button>
                                 </div>
                             </div>
