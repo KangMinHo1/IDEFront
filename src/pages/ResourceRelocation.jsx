@@ -5,13 +5,17 @@ import { useNavigate } from 'react-router-dom';
 import { 
     VscFolder, VscFolderOpened, VscFile, VscWand, VscCheck, VscClose,
     VscChevronRight, VscChevronDown, VscArrowRight, VscChevronLeft,
-    VscTrash, VscEdit, VscSearch, VscSparkle, VscLoading
+    VscTrash, VscSearch, VscSparkle, VscLoading
 } from "react-icons/vsc";
 import { DiReact, DiJsBadge, DiPython, DiJava, DiMarkdown } from "react-icons/di";
 
 import MenuBar from '../components/MenuBar'; 
 import { setVirtualTree, clearVirtualTree, openFile, setWorkspaceId, setWorkspaceTree, setActiveProject, mergeProjectFiles } from '../store/slices/fileSystemSlice';
-import { getMyWorkspacesApi, fetchWorkspaceProjectsApi, fetchProjectFilesApi, fetchVirtualViewsApi, generateVirtualViewApi, deleteVirtualViewApi } from '../utils/api'; 
+import { 
+    getMyWorkspacesApi, fetchWorkspaceProjectsApi, fetchProjectFilesApi, 
+    fetchVirtualViewsApi, generateVirtualViewApi, deleteVirtualViewApi,
+    activateVirtualViewApi, deactivateVirtualViewApi 
+} from '../utils/api'; 
 
 const getFileIcon = (name) => {
     if (!name) return <VscFile className="text-gray-400" size={16} />;
@@ -33,6 +37,7 @@ const getWorkspacePath = (id) => {
     return `/workspace/${isTeam ? 'team' : 'personal'}/${id}`;
 };
 
+// 📁 원본 트리 컴포넌트
 const OriginalTree = ({ node }) => {
     const [isOpen, setIsOpen] = useState(true);
     const dispatch = useDispatch();
@@ -69,7 +74,7 @@ const OriginalTree = ({ node }) => {
     );
 };
 
-// 💡 백엔드에서 받은 트리 구조를 그대로 렌더링하도록 단순화
+// ✨ 가상 트리 컴포넌트
 const VirtualFolderTree = ({ folder }) => {
     const [isOpen, setIsOpen] = useState(true);
     const dispatch = useDispatch();
@@ -115,22 +120,21 @@ export default function ResourceRelocation() {
     const navigate = useNavigate();
     const dispatch = useDispatch();
     
+    // Redux 상태
     const { tree, activeProject, workspaceId, virtualTree } = useSelector(state => state.fileSystem);
-    const isVirtualMode = virtualTree !== null && virtualTree !== undefined;
+    const isVirtualMode = virtualTree !== null && virtualTree !== undefined; // 현재 IDE에 가상 뷰가 씌워져 있는지 여부
 
     const [viewMode, setViewMode] = useState('list'); 
     const [workspaces, setWorkspaces] = useState([]);
     const [isLoadingWs, setIsLoadingWs] = useState(true);
 
-    const [isEditing, setIsEditing] = useState(false);
-    
-    // 💡 백엔드 및 AI 연동을 위한 상태
-    const [savedViews, setSavedViews] = useState([]); // 백엔드에서 불러온 뷰 목록
-    const [selectedView, setSelectedView] = useState(null); // 현재 클릭해서 보고 있는 뷰 객체
-    const [aiPrompt, setAiPrompt] = useState(''); // 사용자가 입력할 AI 프롬프트
-    const [isGenerating, setIsGenerating] = useState(false); // AI 생성 로딩 상태
+    // AI 및 뷰 목록 관리 상태
+    const [savedViews, setSavedViews] = useState([]); 
+    // 💡 선택된 뷰 (null이면 '원본 구조'가 선택된 상태를 의미함)
+    const [selectedView, setSelectedView] = useState(null); 
+    const [aiPrompt, setAiPrompt] = useState(''); 
+    const [isGenerating, setIsGenerating] = useState(false); 
 
-    // 1. 초기 워크스페이스 목록 로드
     useEffect(() => {
         if (viewMode === 'list') {
             getMyWorkspacesApi()
@@ -140,7 +144,6 @@ export default function ResourceRelocation() {
         }
     }, [viewMode]);
 
-    // 2. 워크스페이스 진입 시 원본 트리와 "저장된 가상 뷰 목록" 로드
     const handleSelectWorkspace = async (ws) => {
         const targetId = ws.uuid || ws.id || ws.workspaceId;
         setIsLoadingWs(true);
@@ -154,20 +157,17 @@ export default function ResourceRelocation() {
                 dispatch(setActiveProject(projectName));
 
                 try {
-                    // 원본 파일 병합
                     const files = await fetchProjectFilesApi(targetId, projectName);
                     dispatch(mergeProjectFiles({ projectName, files }));
 
-                    // 백엔드에서 해당 프로젝트의 저장된 뷰 목록을 불러옵니다.
                     const views = await fetchVirtualViewsApi(targetId, projectName);
-                    setSavedViews(views || []);
+                    // 배열 형태가 아니면 빈 배열로 처리 (백엔드 응답 방어)
+                    setSavedViews(Array.isArray(views) ? views : (views ? [views] : []));
                 } catch (err) {
-                    console.error("데이터 구조 로드 실패:", err);
+                    console.error("데이터 로드 실패:", err);
                 }
             }
-
-            setIsEditing(false);
-            setSelectedView(null);
+            setSelectedView(null); // 진입 시 기본으로 '원본 구조' 탭 선택
             setViewMode('detail');
         } catch (e) {
             alert("프로젝트 정보를 불러오지 못했습니다.");
@@ -176,49 +176,56 @@ export default function ResourceRelocation() {
         }
     };
 
-    // 3. AI에게 뷰 생성 요청 (새로운 핵심 로직)
     const handleGenerateAiView = async () => {
         if (!aiPrompt.trim() || isGenerating) return;
         setIsGenerating(true);
         try {
-            // AI 생성 API 호출
             const newView = await generateVirtualViewApi(workspaceId, activeProject, aiPrompt);
-            
-            // 성공하면 목록 갱신 및 방금 만든 뷰 자동 선택
             setSavedViews(prev => [...prev, newView]);
-            setSelectedView(newView);
-            setAiPrompt(''); // 입력창 초기화
+            setSelectedView(newView); // 생성 즉시 생성된 뷰 선택
+            setAiPrompt(''); 
         } catch (error) {
-            alert("AI가 뷰를 생성하는 중 오류가 발생했습니다: " + error.message);
+            alert("AI 가상 뷰 생성 오류: " + error.message);
         } finally {
             setIsGenerating(false);
         }
     };
 
-    // 4. 현재 선택된 뷰를 Redux(전역 상태)에 적용하여 IDE에 반영
-    const handleApplyView = () => {
-        if (!selectedView) return;
-        dispatch(setVirtualTree(selectedView.treeData)); // 백엔드에서 준 트리 구조 통째로 저장
-        setIsEditing(false); 
-    };
-
-    // 5. 뷰 삭제 로직
     const handleDeleteView = async (viewId) => {
-        if(!window.confirm("이 뷰를 삭제하시겠습니까?")) return;
+        if(!window.confirm("이 가상 뷰를 삭제하시겠습니까?")) return;
         try {
             await deleteVirtualViewApi(workspaceId, activeProject, viewId);
             setSavedViews(prev => prev.filter(v => v.id !== viewId));
-            if (selectedView?.id === viewId) setSelectedView(null);
+            if (selectedView?.id === viewId) setSelectedView(null); // 보고 있던 뷰를 지웠다면 원본 구조로 포커스 이동
         } catch (error) {
             alert("삭제 실패: " + error.message);
         }
     };
 
-    // 적용된 뷰 원본으로 되돌리기
-    const handleReset = () => {
-        if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (원본 파일 구조로 돌아갑니다)")) {
-            dispatch(clearVirtualTree());
-            setIsEditing(false); 
+    // 💡 통합된 [적용하기] 버튼 핸들러 (Activate & Deactivate 처리)
+    const handleApply = async () => {
+        // 1. '원본 구조'가 선택된 상태일 때 적용하기를 누른 경우
+        if (selectedView === null) {
+            if (!isVirtualMode) return; // 이미 원본이면 아무것도 안 함
+            if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (IDE가 원본 파일 구조로 돌아갑니다)")) {
+                try {
+                    await deactivateVirtualViewApi(workspaceId, activeProject); // 백엔드 통신 (Deactivate)
+                    dispatch(clearVirtualTree()); // 프론트엔드 IDE 원본 복구
+                    alert("성공적으로 원본 구조로 복구되었습니다.");
+                } catch (error) {
+                    alert("원본 복구에 실패했습니다: " + error.message);
+                }
+            }
+        } 
+        // 2. 'AI 가상 뷰'가 선택된 상태일 때 적용하기를 누른 경우
+        else {
+            try {
+                await activateVirtualViewApi(workspaceId, activeProject, selectedView.id); // 백엔드 통신 (Activate)
+                dispatch(setVirtualTree(selectedView.treeData)); // 프론트엔드 IDE 가상 뷰 적용
+                alert(`'${selectedView.name}' 뷰가 탐색기에 적용되었습니다!`);
+            } catch (error) {
+                alert("뷰 적용에 실패했습니다: " + error.message);
+            }
         }
     };
 
@@ -228,12 +235,13 @@ export default function ResourceRelocation() {
 
             <div className="flex-1 overflow-y-auto">
                 {viewMode === 'list' ? (
+                    // 워크스페이스 선택 목록 화면 (변경 없음)
                     <div className="max-w-[1200px] w-full mx-auto py-12 px-6 flex flex-col h-full animate-fade-in">
                         <div className="flex items-center gap-3 mb-8">
                             <div className="p-3 bg-blue-100 rounded-xl text-blue-600"><VscWand size={28} /></div>
                             <div>
                                 <h1 className="text-3xl font-black text-gray-900 tracking-tight">자료 재배치 워크스페이스 선택</h1>
-                                <p className="text-gray-500 font-medium mt-1">가상 폴더 구조를 적용하거나 해제할 워크스페이스를 선택하세요.</p>
+                                <p className="text-gray-500 font-medium mt-1">가상 폴더 구조를 적용하거나 관리할 워크스페이스를 선택하세요.</p>
                             </div>
                         </div>
 
@@ -253,7 +261,7 @@ export default function ResourceRelocation() {
                                     
                                     return (
                                         <div key={targetId} onClick={() => handleSelectWorkspace(ws)}
-                                            className={`bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-lg hover:-translate-y-1 cursor-pointer transition-all relative group flex flex-col h-[160px]`}>
+                                            className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-lg hover:-translate-y-1 cursor-pointer transition-all relative group flex flex-col h-[160px]">
                                             <div className="flex justify-between items-start mb-4">
                                                 <div className="flex items-center gap-3">
                                                     <VscFolderOpened className="text-yellow-500 text-3xl drop-shadow-sm" />
@@ -261,14 +269,6 @@ export default function ResourceRelocation() {
                                                 </div>
                                             </div>
                                             <p className="text-xs text-gray-400 font-mono mb-auto">ID: {targetId.substring(0, 13)}...</p>
-                                            <div className="flex justify-between items-center border-t border-gray-100 pt-4 mt-2">
-                                                <span className={`px-3 py-1 rounded-md text-[10px] font-bold ${isTeam ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-100 text-gray-500'}`}>
-                                                    {isTeam ? 'TEAM' : 'SOLO'}
-                                                </span>
-                                                <span className="text-xs font-bold text-gray-400 group-hover:text-blue-600 flex items-center gap-1 transition-colors">
-                                                    설정 편집 <VscArrowRight />
-                                                </span>
-                                            </div>
                                         </div>
                                     );
                                 })}
@@ -276,183 +276,169 @@ export default function ResourceRelocation() {
                         )}
                     </div>
                 ) : (
-                    <div className="max-w-[1300px] w-full mx-auto py-8 px-6 flex flex-col h-full animate-fade-in">
-                        <div className="mb-6 flex flex-col gap-3 shrink-0">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                    <button onClick={() => setViewMode('list')} className="p-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-xl transition-colors shadow-sm">
-                                        <VscChevronLeft size={24} />
-                                    </button>
-                                    <div className="p-2 bg-blue-100 rounded-xl text-blue-600"><VscWand size={24} /></div>
-                                    <h1 className="text-2xl font-black text-gray-900 flex items-center gap-3">
-                                        가상 폴더 탐색기
-                                        {activeProject && (
-                                            <span className="text-[13px] font-bold bg-gray-800 text-white px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
-                                                <VscFolderOpened /> {activeProject}
-                                            </span>
-                                        )}
-                                    </h1>
-                                </div>
-                                <button onClick={() => navigate(getWorkspacePath(workspaceId))} className="px-6 py-2.5 bg-[#111827] text-white text-[13px] font-bold rounded-xl hover:bg-black transition-colors flex items-center gap-2 shadow-md shadow-gray-400/20">
-                                    IDE 에디터로 돌아가기 <VscArrowRight />
+                    // 💡 새롭게 바뀐 "대시보드 통합 형태"의 탐색기 화면
+                    <div className="max-w-[1400px] w-full mx-auto py-8 px-6 flex flex-col h-full animate-fade-in">
+                        {/* 상단 헤더 바 */}
+                        <div className="mb-6 flex items-center justify-between shrink-0">
+                            <div className="flex items-center gap-4">
+                                <button onClick={() => setViewMode('list')} className="p-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-xl transition-colors shadow-sm">
+                                    <VscChevronLeft size={24} />
                                 </button>
+                                <div className="p-2 bg-blue-100 rounded-xl text-blue-600"><VscWand size={24} /></div>
+                                <h1 className="text-2xl font-black text-gray-900 flex items-center gap-3">
+                                    자료 재배치 매니저
+                                    {activeProject && (
+                                        <span className="text-[13px] font-bold bg-gray-800 text-white px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
+                                            <VscFolderOpened /> {activeProject}
+                                        </span>
+                                    )}
+                                </h1>
                             </div>
+                            <button onClick={() => navigate(getWorkspacePath(workspaceId))} className="px-6 py-2.5 bg-[#111827] text-white text-[13px] font-bold rounded-xl hover:bg-black transition-colors flex items-center gap-2 shadow-md shadow-gray-400/20">
+                                IDE 에디터로 돌아가기 <VscArrowRight />
+                            </button>
                         </div>
 
-                        {/* 현재 적용된 뷰가 있다면 (IDE 탐색기에 반영된 상태) */}
-                        {isVirtualMode && !isEditing ? (
-                            <div className="bg-white rounded-3xl shadow-xl border border-blue-200 flex flex-col flex-1 overflow-hidden animate-fade-in ring-4 ring-blue-50">
-                                <div className="px-6 py-5 bg-gradient-to-r from-blue-50 to-white border-b border-gray-200 flex items-center justify-between z-10">
-                                    <div className="flex items-center gap-3 text-blue-700 font-extrabold text-[15px]">
-                                        <span className="relative flex h-3 w-3">
-                                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                                          <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
-                                        </span>
-                                        현재 가상 뷰 적용 중: {virtualTree.name}
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setIsEditing(true)} className="flex items-center gap-1.5 px-5 py-2 text-[13px] font-bold text-blue-600 bg-white hover:bg-blue-50 border border-blue-200 rounded-xl transition-colors shadow-sm">
-                                            <VscEdit size={16} /> 다른 뷰 선택하기
-                                        </button>
-                                        <button onClick={handleReset} className="flex items-center gap-1.5 px-5 py-2 text-[13px] font-bold text-red-600 bg-white hover:bg-red-50 rounded-xl transition-colors border border-red-200 shadow-sm">
-                                            <VscTrash size={16} /> 원본 구조로 복구하기
-                                        </button>
-                                    </div>
-                                </div>
-                                
-                                <div className="p-8 flex-1 overflow-y-auto bg-gray-50/50 custom-scrollbar">
-                                    <div className="max-w-3xl mx-auto border border-gray-200 rounded-2xl p-6 shadow-sm bg-white">
-                                        <div className="space-y-1">
-                                            {virtualTree?.children?.map(folder => (
-                                                <VirtualFolderTree key={folder.id} folder={folder} />
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : !isEditing && !isVirtualMode ? (
-                            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 flex flex-col flex-1 overflow-hidden animate-fade-in">
-                                <div className="px-6 py-5 bg-gray-50 border-b border-gray-200 flex items-center justify-between z-10">
-                                    <div className="flex items-center gap-2 text-gray-700 font-extrabold text-[15px]">
-                                        <VscFolderOpened size={20} className="text-yellow-500" />
-                                        실제 탐색기 원본 구조 (Original)
-                                    </div>
-                                    <button onClick={() => setIsEditing(true)} className="flex items-center gap-2 px-6 py-2.5 text-[13px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-md shadow-blue-200">
-                                        <VscSparkle size={16} /> AI로 가상 뷰 관리/생성하기
-                                    </button>
-                                </div>
-                                <div className="p-8 flex-1 overflow-y-auto bg-gray-50/50 custom-scrollbar">
-                                    <div className="max-w-3xl mx-auto border border-gray-200 rounded-2xl p-6 shadow-sm bg-white">
-                                        <div className="space-y-1">
-                                            {tree?.children ? tree.children.map(child => <OriginalTree key={child.id} node={child} />) : <div className="text-xs text-gray-400 p-4">원본 파일이 없습니다.</div>}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="bg-white rounded-3xl shadow-lg border border-gray-200 flex flex-col overflow-hidden animate-fade-in flex-1">
-                                
-                                {/* 💡 AI 프롬프트 영역 */}
-                                <div className="p-6 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-b border-gray-200 shrink-0">
-                                    <h3 className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2 mb-3">
-                                        <VscSparkle className="text-blue-600" size={18} /> AI에게 새로운 뷰 생성을 요청해보세요
-                                    </h3>
-                                    <div className="flex gap-3">
-                                        <input 
-                                            value={aiPrompt}
-                                            onChange={e => setAiPrompt(e.target.value)}
-                                            onKeyDown={e => { if (e.key === 'Enter') handleGenerateAiView(); }}
-                                            disabled={isGenerating}
-                                            placeholder="예: 프론트엔드와 백엔드로 폴더를 분리해줘, 확장자별로 모아줘 등..."
-                                            className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-[13px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 shadow-sm transition-all disabled:bg-gray-100"
-                                        />
-                                        <button 
-                                            onClick={handleGenerateAiView}
-                                            disabled={!aiPrompt.trim() || isGenerating}
-                                            className="px-6 bg-[#111827] text-white rounded-xl text-[13px] font-bold hover:bg-black transition-all flex items-center justify-center min-w-[120px] shadow-md disabled:bg-gray-400 disabled:shadow-none"
-                                        >
-                                            {isGenerating ? <VscLoading className="animate-spin" size={18} /> : "✨ AI로 생성"}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x border-b border-gray-200 flex-1 min-h-[400px]">
-                                    
-                                    {/* 왼쪽: 저장된 뷰 목록 (Saved Views) */}
-                                    <div className="flex-1 bg-[#fafafa] flex flex-col min-w-[280px] max-w-[320px]">
-                                        <div className="px-6 py-4 bg-white border-b border-gray-200 shrink-0 shadow-sm flex items-center justify-between">
-                                            <span className="text-xs font-bold text-gray-500 tracking-wide flex items-center gap-2">
-                                                <VscFolderOpened size={16} className="text-blue-500" /> 팀에 저장된 가상 뷰
-                                            </span>
-                                            <span className="bg-blue-100 text-blue-600 text-[10px] font-bold px-2 py-0.5 rounded-full">{savedViews.length}</span>
-                                        </div>
-                                        <div className="py-4 px-3 flex-1 overflow-y-auto custom-scrollbar space-y-2">
-                                            {savedViews.length === 0 ? (
-                                                <div className="text-xs text-gray-400 p-4 text-center mt-10">
-                                                    아직 생성된 뷰가 없습니다.<br/>위 입력창에서 AI에게 요청해보세요!
-                                                </div>
-                                            ) : (
-                                                savedViews.map(view => (
-                                                    <div key={view.id} 
-                                                         onClick={() => setSelectedView(view)}
-                                                         className={`p-3 rounded-xl border cursor-pointer transition-all group relative overflow-hidden ${selectedView?.id === view.id ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-white border-gray-200 hover:border-blue-200 hover:shadow-sm'}`}>
-                                                        <div className="flex items-center gap-2 mb-1">
-                                                            <VscCheck className={selectedView?.id === view.id ? "text-blue-600" : "text-transparent"} size={16} />
-                                                            <span className={`text-[13px] font-bold ${selectedView?.id === view.id ? 'text-blue-800' : 'text-gray-700'}`}>{view.name}</span>
-                                                        </div>
-                                                        <p className="text-[11px] text-gray-400 truncate pl-6">{view.prompt || "AI 자동 분류"}</p>
-                                                        
-                                                        <button 
-                                                            onClick={(e) => { e.stopPropagation(); handleDeleteView(view.id); }}
-                                                            className="absolute top-1/2 -translate-y-1/2 right-3 p-1.5 text-gray-400 hover:bg-red-100 hover:text-red-600 rounded-md opacity-0 group-hover:opacity-100 transition-all"
-                                                        >
-                                                            <VscTrash size={14} />
-                                                        </button>
-                                                    </div>
-                                                ))
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* 오른쪽: 선택한 뷰의 프리뷰 */}
-                                    <div className="flex-[1.5] bg-white flex flex-col">
-                                        <div className="px-6 py-4 bg-white border-b border-gray-200 shrink-0 shadow-sm z-10">
-                                            <span className="text-[13px] font-extrabold text-blue-700 flex items-center gap-2">
-                                                ✨ 트리 프리뷰 (Preview)
-                                            </span>
-                                        </div>
-                                        <div className="p-6 flex-1 overflow-y-auto custom-scrollbar bg-gray-50/30">
-                                            {!selectedView ? (
-                                                <div className="flex flex-col items-center justify-center h-full text-gray-400 space-y-3">
-                                                    <VscSearch size={40} className="text-gray-300" />
-                                                    <p className="text-sm font-bold">왼쪽에서 저장된 뷰를 선택하거나 새 뷰를 생성하세요.</p>
-                                                </div>
-                                            ) : (
-                                                <div className="space-y-2">
-                                                    {selectedView.treeData?.children?.map(folder => (
-                                                        <VirtualFolderTree key={folder.id} folder={folder} />
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* 하단 적용 버튼 영역 */}
-                                <div className="bg-white px-6 py-5 flex justify-end gap-3 shrink-0 shadow-[0_-4px_10px_rgba(0,0,0,0.02)] border-t border-gray-200">
-                                    <button onClick={() => setIsEditing(false)} className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold text-[13px] rounded-xl hover:bg-gray-50 transition-colors flex items-center gap-2">
-                                        <VscClose size={18} /> 취소
-                                    </button>
+                        {/* 메인 대시보드 박스 */}
+                        <div className="bg-white rounded-3xl shadow-lg border border-gray-200 flex flex-col overflow-hidden flex-1 mb-4">
+                            
+                            {/* 상단 AI 프롬프트 생성 영역 */}
+                            <div className="p-6 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-b border-gray-200 shrink-0">
+                                <h3 className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2 mb-3">
+                                    <VscSparkle className="text-blue-600" size={18} /> AI에게 새로운 분류(뷰) 생성을 요청해보세요
+                                </h3>
+                                <div className="flex gap-3">
+                                    <input 
+                                        value={aiPrompt}
+                                        onChange={e => setAiPrompt(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') handleGenerateAiView(); }}
+                                        disabled={isGenerating}
+                                        placeholder="예: 프론트엔드와 백엔드로 폴더를 분리해줘, 확장자별로 모아줘 등..."
+                                        className="flex-1 bg-white border border-gray-300 rounded-xl px-4 py-3 text-[13px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 shadow-sm transition-all disabled:bg-gray-100"
+                                    />
                                     <button 
-                                        onClick={handleApplyView} 
-                                        disabled={!selectedView} 
-                                        className="px-8 py-2.5 bg-blue-600 text-white font-bold text-[13px] rounded-xl hover:bg-blue-700 shadow-md shadow-blue-200 transition-all flex items-center gap-2 disabled:bg-gray-300 disabled:text-gray-500 disabled:shadow-none group"
+                                        onClick={handleGenerateAiView}
+                                        disabled={!aiPrompt.trim() || isGenerating}
+                                        className="px-8 bg-[#111827] text-white rounded-xl text-[13px] font-bold hover:bg-black transition-all flex items-center justify-center min-w-[140px] shadow-md disabled:bg-gray-400 disabled:shadow-none"
                                     >
-                                        <VscCheck size={18} className="group-disabled:opacity-50" /> 선택한 뷰를 탐색기에 적용하기
+                                        {isGenerating ? <VscLoading className="animate-spin" size={18} /> : "✨ AI로 생성하기"}
                                     </button>
                                 </div>
                             </div>
-                        )}
+
+                            {/* 하단 좌우 스플릿 (뷰 목록 & 프리뷰) */}
+                            <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x border-gray-200 flex-1 min-h-[500px] overflow-hidden">
+                                
+                                {/* 왼쪽: 뷰 목록 패널 (항상 노출됨!) */}
+                                <div className="w-[320px] bg-[#fafafa] flex flex-col shrink-0">
+                                    <div className="px-6 py-4 border-b border-gray-200 bg-white font-extrabold text-[13px] text-gray-700 flex justify-between items-center shadow-sm z-10">
+                                        저장된 뷰 목록 (Views)
+                                    </div>
+                                    <div className="p-4 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                                        
+                                        {/* 1. 실제 탐색기 원본 구조 (고정) */}
+                                        <div 
+                                            onClick={() => setSelectedView(null)}
+                                            className={`p-3.5 rounded-2xl border cursor-pointer transition-all flex items-center gap-3
+                                            ${selectedView === null ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-100 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                                        >
+                                            <VscFolderOpened className={selectedView === null ? 'text-blue-600' : 'text-gray-400'} size={24} />
+                                            <div className="flex-1">
+                                                <div className={`text-[13px] font-bold ${selectedView === null ? 'text-blue-800' : 'text-gray-700'}`}>실제 탐색기 원본 구조</div>
+                                                <div className="text-[11px] text-gray-400 mt-0.5">물리적인 실제 폴더 구조</div>
+                                            </div>
+                                            {/* IDE에 원본이 적용되어 있다면 뱃지 표시 */}
+                                            {!isVirtualMode && <span className="px-2 py-1 bg-gray-800 text-white text-[10px] font-bold rounded-md shadow-sm">IDE 적용중</span>}
+                                        </div>
+
+                                        <div className="h-px bg-gray-200 my-4 mx-2"></div>
+
+                                        {/* 2. AI 가상 뷰 목록 */}
+                                        <div className="px-2 pb-1 text-[11px] font-bold text-gray-400 flex justify-between">
+                                            <span>AI 가상 뷰</span>
+                                            <span>{savedViews.length}개</span>
+                                        </div>
+                                        
+                                        {savedViews.length === 0 && (
+                                            <div className="text-xs text-gray-400 p-4 text-center mt-2 border border-dashed border-gray-300 rounded-xl bg-gray-50">
+                                                위 입력창에서 AI에게<br/>새로운 뷰 생성을 요청해보세요!
+                                            </div>
+                                        )}
+
+                                        {savedViews.map(view => (
+                                            <div key={view.id} 
+                                                onClick={() => setSelectedView(view)}
+                                                className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group
+                                                ${selectedView?.id === view.id ? 'bg-indigo-50 border-indigo-400 ring-2 ring-indigo-100 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                                            >
+                                                <div className="flex items-center gap-2 mb-1.5 pr-6">
+                                                    <VscSparkle className={selectedView?.id === view.id ? 'text-indigo-600' : 'text-gray-400'} size={18} />
+                                                    <div className={`text-[13px] font-extrabold truncate ${selectedView?.id === view.id ? 'text-indigo-800' : 'text-gray-700'}`}>{view.name}</div>
+                                                </div>
+                                                <p className="text-[11px] text-gray-500 truncate pl-6 leading-tight" title={view.prompt}>{view.prompt || "AI가 생성한 가상 폴더 구조"}</p>
+
+                                                {/* 현재 IDE에 이 뷰가 켜져있다면 표시 */}
+                                                {isVirtualMode && virtualTree?.name === view.name && (
+                                                    <span className="absolute top-3.5 right-3 px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded-md shadow-sm">IDE 적용중</span>
+                                                )}
+
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteView(view.id); }}
+                                                    className="absolute bottom-2.5 right-3 p-1.5 text-gray-400 hover:bg-red-100 hover:text-red-600 rounded-md opacity-0 group-hover:opacity-100 transition-all"
+                                                    title="이 뷰 삭제하기"
+                                                >
+                                                    <VscTrash size={15} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* 오른쪽: 프리뷰 및 적용 영역 */}
+                                <div className="flex-[2] bg-white flex flex-col relative bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-gray-50/20">
+                                    <div className="px-8 py-4 border-b border-gray-200 bg-white flex justify-between items-center z-10 shadow-sm">
+                                        <span className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2">
+                                            {selectedView === null ? (
+                                                <><VscFolderOpened className="text-yellow-500" size={20}/> 원본 구조 프리뷰</>
+                                            ) : (
+                                                <><VscSparkle className="text-indigo-500" size={20}/> 가상 뷰 프리뷰: <span className="text-indigo-700">{selectedView.name}</span></>
+                                            )}
+                                        </span>
+
+                                        {/* 우측 상단 메인 [적용하기] 버튼 */}
+                                        {selectedView === null ? (
+                                            isVirtualMode ? (
+                                                <button onClick={handleApply} className="px-5 py-2.5 text-[12px] font-extrabold bg-gray-800 text-white rounded-xl hover:bg-black transition-all flex items-center gap-2 shadow-md hover:shadow-lg">
+                                                    <VscCheck size={16}/> 원본 구조로 복구 (적용)
+                                                </button>
+                                            ) : (
+                                                <span className="px-4 py-2 text-[12px] font-bold bg-gray-100 text-gray-400 border border-gray-200 rounded-xl flex items-center gap-2 cursor-not-allowed">
+                                                    <VscCheck size={16}/> 이미 IDE에 적용되어 있습니다
+                                                </span>
+                                            )
+                                        ) : (
+                                            <button onClick={handleApply} className="px-5 py-2.5 text-[12px] font-extrabold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-md shadow-indigo-200 hover:shadow-lg">
+                                                <VscCheck size={16}/> 이 가상 뷰를 IDE 탐색기에 적용하기
+                                            </button>
+                                        )}
+                                    </div>
+                                    
+                                    {/* 실제 트리 프리뷰 컨텐츠 영역 */}
+                                    <div className="p-8 flex-1 overflow-y-auto custom-scrollbar">
+                                        <div className="max-w-4xl mx-auto border border-gray-200 rounded-2xl p-8 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white">
+                                            <div className="space-y-1">
+                                                {selectedView === null ? (
+                                                    tree?.children ? tree.children.map(child => <OriginalTree key={child.id} node={child} />) : <div className="text-xs text-gray-400 p-4">원본 파일이 없습니다.</div>
+                                                ) : (
+                                                    selectedView.treeData?.children?.map(folder => <VirtualFolderTree key={folder.id} folder={folder} />)
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>
