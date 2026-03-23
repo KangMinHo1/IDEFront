@@ -4,9 +4,27 @@ import React, { useRef, useEffect, useState } from 'react';
 import Editor, { DiffEditor, useMonaco } from '@monaco-editor/react'; 
 import { useDispatch, useSelector } from 'react-redux';
 import { updateFileContent, setAiSuggestion, clearAiSuggestion } from '../store/slices/fileSystemSlice'; 
-import { saveFileApi, fetchAiAssistApi, fetchAiAutocompleteApi } from '../utils/api'; 
+// 💡 [수정] getUserProfileApi 임포트 포함!
+import { saveFileApi, fetchAiAssistApi, fetchAiAutocompleteApi, getUserProfileApi } from '../utils/api'; 
 import { writeToTerminal, toggleBreakpoint, triggerEditorCmd, addAgentMessage, setSelectedText } from '../store/slices/uiSlice';
 import { VscCheck, VscClose, VscSparkle, VscLoading } from "react-icons/vsc"; 
+
+// 💡 [동시 편집 라이브러리]
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { MonacoBinding } from 'y-monaco';
+import { useAuth } from '../utils/AuthContext'; 
+
+// 💡 [웹소켓 URL 404 에러 방어]
+class CustomWebSocket extends WebSocket {
+    constructor(url, protocols) {
+        const parsedUrl = new URL(url);
+        const pathParts = parsedUrl.pathname.split('/ws/collab/');
+        const roomName = pathParts.length > 1 ? decodeURIComponent(pathParts[1]) : 'default-room';
+        const safeUrl = `ws://localhost:8080/ws/collab?room=${encodeURIComponent(roomName)}`;
+        super(safeUrl, protocols);
+    }
+}
 
 const applyConflictEdit = (monaco, uri, conflict, type) => {
     const model = monaco.editor.getModel(uri);
@@ -36,6 +54,8 @@ const applyConflictEdit = (monaco, uri, conflict, type) => {
 export default function CodeEditor() {
   const dispatch = useDispatch();
   const monaco = useMonaco();
+  const { user } = useAuth(); 
+
   const editorRef = useRef(null);
   const decorationsRef = useRef([]);
 
@@ -45,6 +65,9 @@ export default function CodeEditor() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const aiInputRef = useRef(null);
 
+  // 💡 [문제 해결의 핵심!] 이게 없어서 하얀 화면이 떴었습니다 ㅠㅠ 닉네임 상태 추가!
+  const [fetchedNickname, setFetchedNickname] = useState('');
+
   const { activeFileId, fileContents, workspaceId, activeProject, activeBranch, aiSuggestion } = useSelector(state => state.fileSystem);
   const { editorCmd, debugLine, breakpoints } = useSelector(state => state.ui);
   
@@ -53,6 +76,161 @@ export default function CodeEditor() {
   };
 
   const stateRef = useRef({ activeFileId, workspaceId, activeProject, activeBranch });
+
+  // 💡 [Yjs 전용 참조 객체들]
+  const ydocRef = useRef(null);
+  const providerRef = useRef(null);
+  const bindingRef = useRef(null);
+
+  // 💡 [동시 편집 방 닫기 로직]
+  const cleanupCollaboration = () => {
+      if (bindingRef.current) { bindingRef.current.destroy(); bindingRef.current = null; }
+      if (providerRef.current) { providerRef.current.disconnect(); providerRef.current = null; }
+      if (ydocRef.current) { ydocRef.current.destroy(); ydocRef.current = null; }
+  };
+
+  // 💡 [동시 편집 방 열기 로직]
+  const setupCollaboration = (editor) => {
+      cleanupCollaboration();
+      if (!activeFileId || !workspaceId || !activeProject) return;
+
+      const model = editor.getModel();
+      if (!model) return;
+
+      const roomName = `${workspaceId}:${activeProject}:${activeBranch || 'master'}:${activeFileId}`;
+      
+      const ydoc = new Y.Doc();
+      ydocRef.current = ydoc;
+
+      const provider = new WebsocketProvider(
+          'ws://localhost:8080/ws/collab', 
+          roomName,
+          ydoc,
+          { 
+              WebSocketPolyfill: CustomWebSocket, 
+              maxBackoffTime: 5000 
+          }
+      );
+      providerRef.current = provider;
+
+      const awareness = provider.awareness;
+      const myColor = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+      
+      // 1차: 일단 도착한 닉네임이 있으면 닉네임, 없으면 '익명 개발자'로 이름표를 답니다.
+      awareness.setLocalStateField('user', {
+          name: fetchedNickname || user?.nickname || '익명 개발자',
+          color: myColor
+      });
+
+      // 💡 [상대방 커서 색상과 이름을 CSS로 확실하게 박아넣는 로직] (position: absolute 추가 완료!)
+      awareness.on('change', () => {
+          const styleId = 'yjs-dynamic-cursors';
+          let styleEl = document.getElementById(styleId);
+          if (!styleEl) {
+              styleEl = document.createElement('style');
+              styleEl.id = styleId;
+              document.head.appendChild(styleEl);
+          }
+
+          const styles = [];
+          awareness.getStates().forEach((state, clientId) => {
+              if (state.user && state.user.name && state.user.color) {
+                  styles.push(`
+                      .yRemoteSelectionHead-${clientId} {
+                          position: absolute !important;
+                          border-left: 2px solid ${state.user.color} !important;
+                          box-sizing: border-box !important;
+                          height: 100% !important;
+                          z-index: 99 !important;
+                          display: inline-block !important;
+                      }
+                      .yRemoteSelectionHead-${clientId}::after {
+                          position: absolute !important;
+                          content: "${state.user.name}" !important;
+                          top: -20px !important;
+                          left: -2px !important;
+                          background-color: ${state.user.color} !important;
+                          color: white !important;
+                          font-size: 11px !important;
+                          font-weight: bold !important;
+                          padding: 2px 6px !important;
+                          border-radius: 4px !important;
+                          border-bottom-left-radius: 0 !important;
+                          white-space: nowrap !important;
+                          z-index: 100 !important;
+                          pointer-events: none !important;
+                      }
+                      .yRemoteSelection-${clientId} {
+                          background-color: ${state.user.color}44 !important;
+                      }
+                  `);
+              }
+          });
+          styleEl.innerHTML = styles.join('\n');
+      });
+
+      const yText = ydoc.getText('monaco');
+
+      // 💡 빈 화면 씹힘 및 "코드 중복 복사" 방지! (나 혼자일 때만 밀어넣음)
+      provider.on('synced', (isSynced) => {
+          if (isSynced) {
+              const isAlone = provider.awareness.getStates().size <= 1;
+              if (isAlone && yText.toString() === '' && fileContents[activeFileId]) {
+                  yText.insert(0, fileContents[activeFileId]);
+              }
+          }
+      });
+
+      const binding = new MonacoBinding(
+          yText,
+          model,
+          new Set([editor]),
+          awareness
+      );
+      bindingRef.current = binding;
+  };
+
+  // =========================================================================
+  // 💡 [익명 개발자 퇴치] API 요청 및 닉네임 덮어쓰기
+  // =========================================================================
+  
+  // 1. 유저 ID가 있으면 서버에 진짜 닉네임을 요청!
+  useEffect(() => {
+      if (user && user.id) {
+          getUserProfileApi(user.id)
+              .then(profile => {
+                  if (profile && profile.nickname) {
+                      setFetchedNickname(profile.nickname);
+                  }
+              })
+              .catch(err => console.error(err));
+      }
+  }, [user]);
+
+  // 2. 닉네임이 도착하면 즉시 스피커(Awareness) 이름을 강제로 갈아 끼웁니다!
+  useEffect(() => {
+      const finalName = fetchedNickname || user?.nickname;
+      if (providerRef.current && providerRef.current.awareness && finalName) {
+          const awareness = providerRef.current.awareness;
+          const currentState = awareness.getLocalState();
+          
+          awareness.setLocalStateField('user', {
+              name: finalName,
+              color: currentState?.user?.color || '#ff9900' 
+          });
+      }
+  }, [fetchedNickname, user?.nickname]); 
+  // =========================================================================
+
+  // 파일 데이터가 Redux에 들어왔을 때만 에디터 연동 시작!
+  const isContentLoaded = fileContents[activeFileId] !== undefined;
+
+  useEffect(() => {
+      if (editorRef.current && isContentLoaded) {
+          setupCollaboration(editorRef.current);
+      }
+      return () => cleanupCollaboration();
+  }, [activeFileId, workspaceId, activeProject, activeBranch, isContentLoaded]);
 
   useEffect(() => {
       stateRef.current = { activeFileId, workspaceId, activeProject, activeBranch };
@@ -126,6 +304,8 @@ export default function CodeEditor() {
 
   const handleEditorDidMount = (editor, monacoInstance) => {
     editorRef.current = editor;
+
+    if (isContentLoaded) setupCollaboration(editor);
 
     editor.onDidChangeCursorSelection((e) => {
         const selection = e.selection;
@@ -290,22 +470,6 @@ export default function CodeEditor() {
               .conflict-current-margin { border-left: 4px solid #3cb371 !important; }
               .conflict-incoming-bg { background-color: rgba(65, 105, 225, 0.2) !important; }
               .conflict-incoming-margin { border-left: 4px solid #4169e1 !important; }
-              
-              .monaco-editor .codelens-decoration a {
-                  color: #2563eb !important;
-                  font-weight: 800 !important;
-                  font-size: 13px !important;
-                  background-color: #eff6ff !important;
-                  padding: 4px 8px !important;
-                  border-radius: 6px !important;
-                  border: 1px solid #bfdbfe !important;
-                  transition: all 0.2s;
-              }
-              .monaco-editor .codelens-decoration a:hover {
-                  background-color: #dbeafe !important;
-                  color: #1d4ed8 !important;
-                  border-color: #93c5fd !important;
-              }
           `;
           document.head.appendChild(style);
       }
@@ -416,7 +580,6 @@ export default function CodeEditor() {
       return () => provider.dispose();
   }, [monaco]);
 
-  // 💡 [핵심 추가 1] 선택된 탭이 'Architecture Map'일 경우 모나코 에디터 렌더링을 차단합니다.
   const isMapTab = activeFileId === 'Architecture Map' || activeFileId === 'CodeMap' || activeFileId?.includes('codemap');
   
   if (!activeFileId) return <div className="h-full w-full bg-[#fdfdfd] flex items-center justify-center text-gray-400 text-sm">파일을 선택하여 편집을 시작하세요</div>;

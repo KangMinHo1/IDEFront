@@ -16,9 +16,9 @@ import CommandPalette from './CommandPalette';
 import GitDashboard from './GitDashboard'; 
 import CodeMap from './CodeMap'; 
 
-// 💡 [수정] setActiveProject 를 추가로 임포트합니다!
+// 💡 불필요한 가짜 API 삭제하고 원래 있던 2개만 남겼습니다!
 import { fetchWorkspaceProjectsApi, fetchVirtualViewsApi } from '../utils/api'; 
-import { setWorkspaceTree, setWorkspaceId, setProjectList, setVirtualTree, clearVirtualTree, setActiveProject } from '../store/slices/fileSystemSlice'; 
+import { setWorkspaceTree, setWorkspaceId, setProjectList, setVirtualTree, clearVirtualTree, setActiveProject, setActiveBranch } from '../store/slices/fileSystemSlice'; 
 
 const DocsPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">Docs Panel</div>; 
 const ApiTestPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">API Test Panel</div>;
@@ -29,30 +29,46 @@ export default function IdeMain() {
   const dispatch = useDispatch();
 
   const { activeActivity, isTerminalVisible, isSidebarVisible, isAgentVisible, isDebugMode, codeMapMode } = useSelector(state => state.ui);
-  
   const { workspaceId, activeProject, activeBranch } = useSelector(state => state.fileSystem);
 
   // =========================================================================
-  // 💡 [핵심 버그 수정] 새로고침(F5) 시 데드락 방지 로직
+  // 💡 [완벽 해결] 접속 시 무조건 "첫 번째 프로젝트" 또는 "기존 프로젝트" 강제 선택!
   // =========================================================================
   useEffect(() => {
     if (id) {
       dispatch(setWorkspaceId(id));
       fetchWorkspaceProjectsApi(id).then(root => {
         dispatch(setWorkspaceTree(root));
-        if (root.children && root.children.length > 0) {
+        
+        // 워크스페이스에 프로젝트가 1개라도 존재한다면?
+        if (root && root.children && root.children.length > 0) {
             dispatch(setProjectList(root.children));
             
-            // 💡 [NEW] 새로고침으로 인해 activeProject가 날아갔다면?
-            // 무조건 트리의 첫 번째 프로젝트를 강제로 시작 프로젝트로 지정합니다!
-            if (!activeProject) {
-                dispatch(setActiveProject(root.children[0].name));
-            }
+            // 1. 브라우저 저장소에서 이전에 작업하던 프로젝트 꺼내기
+            const savedProject = localStorage.getItem(`lastProject_${id}`);
+            const savedBranch = localStorage.getItem(`lastBranch_${id}`);
+            
+            // 2. 저장된 프로젝트가 진짜 있는 건지 확인 (삭제됐을 수도 있으니)
+            const isValidProject = root.children.some(p => p.name === savedProject);
+            
+            // 3. 있으면 그걸로! 없거나 처음 왔으면 무조건 배열의 [0]번째(첫 번째) 프로젝트 강제 선택!
+            const targetProject = isValidProject ? savedProject : root.children[0].name;
+            const targetBranch = savedBranch ? savedBranch : 'master';
+
+            // 4. 에러를 유발하던 가짜 코드를 지우고, Redux에만 깔끔하게 시작 프로젝트 세팅!
+            dispatch(setActiveProject(targetProject));
+            dispatch(setActiveBranch(targetBranch));
         }
       }).catch(console.error);
     }
     // eslint-disable-next-line
   }, [id, dispatch]); 
+
+  // 💡 프로젝트나 브랜치가 변경될 때마다 로컬 스토리지에 최신상태 저장 (새로고침 방어)
+  useEffect(() => {
+      if (workspaceId && activeProject) localStorage.setItem(`lastProject_${workspaceId}`, activeProject);
+      if (workspaceId && activeBranch) localStorage.setItem(`lastBranch_${workspaceId}`, activeBranch);
+  }, [workspaceId, activeProject, activeBranch]);
   // =========================================================================
 
   useEffect(() => {
@@ -60,7 +76,6 @@ export default function IdeMain() {
           const syncBranchVirtualView = async () => {
               try {
                   const views = await fetchVirtualViewsApi(workspaceId, activeBranch);
-                  
                   const activeView = views.find(v => v.isActive === true || v.active === true);
 
                   if (activeView) {
@@ -80,7 +95,6 @@ export default function IdeMain() {
                       dispatch(clearVirtualTree());
                   }
               } catch (error) {
-                  console.error("브랜치 전환 시 가상 뷰 동기화 실패:", error);
                   dispatch(clearVirtualTree()); 
               }
           };
