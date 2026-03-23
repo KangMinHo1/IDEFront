@@ -1,20 +1,21 @@
-// src/pages/ResourceRelocation.jsx
+// 경로: src/pages/ResourceRelocation.jsx
 import React, { useState, useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { 
     VscFolder, VscFolderOpened, VscFile, VscWand, VscCheck,
     VscChevronRight, VscChevronDown, VscArrowRight, VscChevronLeft,
-    VscTrash, VscSparkle, VscLoading
+    VscTrash, VscSparkle, VscRepoForked
 } from "react-icons/vsc";
 import { DiReact, DiJsBadge, DiPython, DiJava, DiMarkdown } from "react-icons/di";
 
 import MenuBar from '../components/MenuBar'; 
 import { setVirtualTree, clearVirtualTree, openFile, setWorkspaceId, setWorkspaceTree, setActiveProject, mergeProjectFiles } from '../store/slices/fileSystemSlice';
 import { 
-    getMyWorkspacesApi, fetchWorkspaceProjectsApi, fetchProjectFilesApi, 
+    getMyWorkspacesApi, fetchWorkspaceProjectsApi, fetchProjectFilesApi, fetchBranchListApi,
     fetchVirtualViewsApi, generateVirtualViewApi, deleteVirtualViewApi,
-    activateVirtualViewApi, deactivateVirtualViewApi 
+    activateVirtualViewApi, deactivateVirtualViewApi, 
+    updateVirtualViewApi // 💡 [NEW] 방금 추가한 업데이트 API 임포트!
 } from '../utils/api'; 
 
 const getFileIcon = (name) => {
@@ -37,7 +38,6 @@ const getWorkspacePath = (id) => {
     return `/workspace/${isTeam ? 'team' : 'personal'}/${id}`;
 };
 
-// 📁 원본 트리 컴포넌트
 const OriginalTree = ({ node }) => {
     const [isOpen, setIsOpen] = useState(true);
     const dispatch = useDispatch();
@@ -45,7 +45,6 @@ const OriginalTree = ({ node }) => {
     const workspaceId = useSelector(state => state.fileSystem.workspaceId);
 
     if (!node) return null;
-    
     const isFile = String(node.type || '').toLowerCase() === 'file' || (!node.children && node.type !== 'directory' && node.type !== 'workspace');
 
     if (isFile) {
@@ -67,16 +66,18 @@ const OriginalTree = ({ node }) => {
             </div>
             {isOpen && node.children && (
                 <div className="border-l border-gray-200 ml-4 pl-1 mt-0.5 space-y-0.5">
-                    {node.children.map((child, idx) => <OriginalTree key={child.id || idx} node={child} />)}
+                    {node.children.map((child, idx) => <OriginalTree key={child.id || child.path || `${child.name}-${idx}`} node={child} />)}
                 </div>
             )}
         </div>
     );
 };
 
-// ✨ 가상 트리 컴포넌트
-const VirtualFolderTree = ({ folder }) => {
+// 💡 [핵심 수정] 가상 폴더 트리에 드래그 앤 드롭 이벤트를 부여합니다.
+const VirtualFolderTree = ({ folder, onDropFile }) => {
     const [isOpen, setIsOpen] = useState(true);
+    const [isDragOver, setIsDragOver] = useState(false); // 마우스가 올라왔을 때 하이라이트 효과용
+    
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const workspaceId = useSelector(state => state.fileSystem.workspaceId);
@@ -87,26 +88,57 @@ const VirtualFolderTree = ({ folder }) => {
     };
 
     return (
-        <div className="ml-1 mb-3">
-            <div className="flex items-center gap-1.5 py-2 px-2 hover:bg-blue-50/50 rounded-lg cursor-pointer transition-colors group" onClick={() => setIsOpen(!isOpen)}>
+        <div className="ml-1 mb-3"
+             // 💡 1. 폴더 영역에 마우스가 들어오면 드롭을 허용합니다.
+             onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+             onDragLeave={() => setIsDragOver(false)}
+             // 💡 2. 파일을 딱 내려놓았을 때 처리!
+             onDrop={(e) => {
+                 e.preventDefault();
+                 setIsDragOver(false);
+                 const fileStr = e.dataTransfer.getData('draggedFile');
+                 const sourceFolder = e.dataTransfer.getData('sourceFolderName');
+                 
+                 // 다른 폴더에서 가져온 파일일 때만 이동 로직 실행
+                 if (fileStr && sourceFolder && sourceFolder !== folder.name) {
+                     const draggedFile = JSON.parse(fileStr);
+                     onDropFile(folder.name, draggedFile, sourceFolder);
+                 }
+             }}
+        >
+            <div className={`flex items-center gap-1.5 py-2 px-2 rounded-lg cursor-pointer transition-colors group
+                ${isDragOver ? 'bg-indigo-100 ring-2 ring-indigo-400 border border-indigo-300 shadow-sm' : 'hover:bg-blue-50/50'}`} 
+                 onClick={() => setIsOpen(!isOpen)}
+            >
                 <span className="text-gray-400 group-hover:text-blue-500 transition-colors">{isOpen ? <VscChevronDown size={18}/> : <VscChevronRight size={18}/>}</span>
                 <span className="text-blue-500">{isOpen ? <VscFolderOpened size={20} /> : <VscFolder size={20} />}</span>
                 <span className="font-bold text-gray-800 text-[14px] select-none ml-1">{folder.name}</span>
                 <span className="ml-2 text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
                     {folder.children?.length || 0}
                 </span>
+                
+                {isDragOver && <span className="ml-auto text-[10px] font-bold text-indigo-600 px-2 bg-white rounded">여기에 이동</span>}
             </div>
+            
             {isOpen && (
-                <div className="border-l border-blue-100 ml-4 pl-3 mt-1 space-y-0.5">
-                    {folder.children?.map(file => (
-                        <div key={file.id} onClick={() => handleFileClick(file)}
-                             className="flex items-center gap-2.5 py-1.5 px-3 rounded-md cursor-pointer transition-colors hover:bg-blue-50 group">
+                <div className={`border-l ml-4 pl-3 mt-1 space-y-0.5 transition-colors ${isDragOver ? 'border-indigo-300' : 'border-blue-100'}`}>
+                    {folder.children?.map((file, idx) => (
+                        <div key={file.realPath || file.id || `${file.name}-${idx}`} 
+                             onClick={() => handleFileClick(file)}
+                             draggable={true} // 💡 3. 파일은 움켜쥘 수 있게 설정!
+                             onDragStart={(e) => {
+                                 // 움켜쥐는 순간 파일 정보와 원래 있던 폴더 이름을 짐칸에 싣습니다.
+                                 e.dataTransfer.setData('draggedFile', JSON.stringify(file));
+                                 e.dataTransfer.setData('sourceFolderName', folder.name);
+                             }}
+                             className="flex items-center gap-2.5 py-1.5 px-3 rounded-md cursor-grab active:cursor-grabbing transition-colors hover:bg-blue-50 group border border-transparent hover:border-blue-100"
+                        >
                             <div className="shrink-0">{getFileIcon(file.name)}</div>
                             <span className="text-[13px] font-medium truncate select-none transition-colors text-gray-700 group-hover:text-blue-700">
                                 {file.name}
                             </span>
                             <span className="ml-auto text-[10px] text-gray-400 font-mono opacity-0 group-hover:opacity-100 transition-opacity truncate max-w-[200px]">
-                                {file.originalPath === '/' ? 'Root' : file.originalPath}
+                                {file.realPath || file.originalPath || '/'}
                             </span>
                         </div>
                     ))}
@@ -120,9 +152,7 @@ export default function ResourceRelocation() {
     const navigate = useNavigate();
     const dispatch = useDispatch();
     
-    // Redux 상태
-    const { tree, activeProject, workspaceId, virtualTree } = useSelector(state => state.fileSystem);
-    const isVirtualMode = virtualTree !== null && virtualTree !== undefined;
+    const { tree, activeProject, workspaceId, activeBranch } = useSelector(state => state.fileSystem);
 
     const [viewMode, setViewMode] = useState('list'); 
     const [workspaces, setWorkspaces] = useState([]);
@@ -132,9 +162,33 @@ export default function ResourceRelocation() {
     const [selectedView, setSelectedView] = useState(null); 
     const [aiPrompt, setAiPrompt] = useState(''); 
     
-    // 💡 AI 생성 및 로딩 팝업용 상태
+    // 💡 [NEW] 사용자가 드래그해서 실시간으로 바뀌는 트리 구조를 담을 State
+    const [editableTreeData, setEditableTreeData] = useState([]);
+
+    const [branches, setBranches] = useState(['master']);
+    const [selectedBranch, setSelectedBranch] = useState('master');
+
     const [isGenerating, setIsGenerating] = useState(false); 
     const [loadingProgress, setLoadingProgress] = useState(0);
+
+    const isOriginalActive = !savedViews.some(v => v.isActive === true || v.active === true);
+
+    const getParsedTreeData = (view) => {
+        if (!view) return [];
+        if (typeof view.treeDataJson === 'string') {
+            try { return JSON.parse(view.treeDataJson); } catch(e) { return []; }
+        }
+        return view.treeDataJson || view.treeData || [];
+    };
+
+    // 💡 selectedView가 바뀔 때마다 editableTreeData를 갱신합니다.
+    useEffect(() => {
+        if (selectedView) {
+            setEditableTreeData(getParsedTreeData(selectedView));
+        } else {
+            setEditableTreeData([]);
+        }
+    }, [selectedView]);
 
     useEffect(() => {
         if (viewMode === 'list') {
@@ -145,16 +199,12 @@ export default function ResourceRelocation() {
         }
     }, [viewMode]);
 
-    // 💡 게이지 애니메이션 로직
     useEffect(() => {
         let interval;
         if (isGenerating) {
             setLoadingProgress(0);
             interval = setInterval(() => {
-                setLoadingProgress(prev => {
-                    if (prev >= 90) return 90; // 실제 완료 전까지는 90%에서 대기
-                    return prev + Math.floor(Math.random() * 15) + 5;
-                });
+                setLoadingProgress(prev => (prev >= 90 ? 90 : prev + Math.floor(Math.random() * 15) + 5));
             }, 500);
         } else {
             setLoadingProgress(100);
@@ -172,21 +222,16 @@ export default function ResourceRelocation() {
             dispatch(setWorkspaceTree(root));
             
             if (root && root.children && root.children.length > 0) {
-                dispatch(setActiveProject(root.children[0].name));
+                const firstProject = root.children[0].name;
+                dispatch(setActiveProject(firstProject));
 
                 try {
-                    await Promise.all(
-                        root.children.map(async (project) => {
-                            const files = await fetchProjectFilesApi(targetId, project.name);
-                            dispatch(mergeProjectFiles({ projectName: project.name, files }));
-                        })
-                    );
-
-                    const views = await fetchVirtualViewsApi(targetId);
-                    setSavedViews(Array.isArray(views) ? views : (views ? [views] : []));
-                } catch (err) {
-                    console.error("데이터 구조 로드 실패:", err);
+                    const branchList = await fetchBranchListApi(targetId, firstProject);
+                    setBranches(branchList && branchList.length > 0 ? branchList : ['master']);
+                } catch(e) {
+                    setBranches(['master']); 
                 }
+                setSelectedBranch(activeBranch || 'master');
             }
             setSelectedView(null); 
             setViewMode('detail');
@@ -197,18 +242,41 @@ export default function ResourceRelocation() {
         }
     };
 
+    useEffect(() => {
+        if (viewMode === 'detail' && workspaceId && tree?.children?.length > 0) {
+            const loadBranchData = async () => {
+                try {
+                    await Promise.all(
+                        tree.children.map(async (project) => {
+                            const files = await fetchProjectFilesApi(workspaceId, project.name, selectedBranch);
+                            dispatch(mergeProjectFiles({ projectName: project.name, files }));
+                        })
+                    );
+                    
+                    const views = await fetchVirtualViewsApi(workspaceId, selectedBranch);
+                    setSavedViews(Array.isArray(views) ? views : (views ? [views] : []));
+                    setSelectedView(null);
+                } catch (error) {
+                    console.error("브랜치 데이터 갱신 실패:", error);
+                }
+            };
+            loadBranchData();
+        }
+        // eslint-disable-next-line
+    }, [selectedBranch, workspaceId, viewMode]);
+
     const handleGenerateAiView = async () => {
         if (!aiPrompt.trim() || isGenerating) return;
         setIsGenerating(true);
         try {
             const viewName = aiPrompt.length > 20 ? aiPrompt.substring(0, 20) + "..." : aiPrompt;
-            const newView = await generateVirtualViewApi(workspaceId, viewName, aiPrompt);
+            const newView = await generateVirtualViewApi(workspaceId, viewName, aiPrompt, selectedBranch);
             
             setSavedViews(prev => [newView, ...prev]); 
             setSelectedView(newView);
             setAiPrompt(''); 
         } catch (error) {
-            alert("AI 가상 뷰 생성 오류: " + error.message);
+            alert(error.message);
         } finally {
             setIsGenerating(false);
         }
@@ -217,16 +285,17 @@ export default function ResourceRelocation() {
     const handleDeleteView = async (viewId) => {
         if(!window.confirm("이 가상 뷰를 삭제하시겠습니까?")) return;
         try {
-            // 💡 [수정] 방금 삭제한 뷰가 현재 IDE에 적용중인 뷰라면 자동으로 원본 복구!
             const viewToDelete = savedViews.find(v => v.id === viewId);
-            const isDeletingActiveView = isVirtualMode && virtualTree?.name === (viewToDelete?.viewName || viewToDelete?.name);
+            const isDeletingActiveView = viewToDelete?.isActive === true || viewToDelete?.active === true;
 
             await deleteVirtualViewApi(workspaceId, viewId);
             setSavedViews(prev => prev.filter(v => v.id !== viewId));
 
             if (isDeletingActiveView) {
-                await deactivateVirtualViewApi(workspaceId);
-                dispatch(clearVirtualTree());
+                await deactivateVirtualViewApi(workspaceId, selectedBranch);
+                if (selectedBranch === activeBranch) {
+                    dispatch(clearVirtualTree());
+                }
                 alert("적용 중이던 가상 뷰가 삭제되어 원본 탐색기로 자동 복구되었습니다.");
             }
 
@@ -238,11 +307,14 @@ export default function ResourceRelocation() {
 
     const handleApply = async () => {
         if (selectedView === null) {
-            if (!isVirtualMode) return; 
-            if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (IDE가 원본 파일 구조로 돌아갑니다)")) {
+            if (isOriginalActive) return; 
+            if(window.confirm("적용된 가상 재배치를 해제하시겠습니까? (원본 파일 구조로 돌아갑니다)")) {
                 try {
-                    await deactivateVirtualViewApi(workspaceId); 
-                    dispatch(clearVirtualTree()); 
+                    await deactivateVirtualViewApi(workspaceId, selectedBranch); 
+                    setSavedViews(prev => prev.map(v => ({ ...v, isActive: false, active: false })));
+                    if (selectedBranch === activeBranch) {
+                        dispatch(clearVirtualTree()); 
+                    }
                     alert("성공적으로 원본 구조로 복구되었습니다.");
                 } catch (error) {
                     alert("원본 복구에 실패했습니다: " + error.message);
@@ -250,23 +322,71 @@ export default function ResourceRelocation() {
             }
         } else {
             try {
-                await activateVirtualViewApi(workspaceId, selectedView.id); 
-                
-                let parsedData = [];
-                if (typeof selectedView.treeDataJson === 'string') {
-                    parsedData = JSON.parse(selectedView.treeDataJson);
-                } else {
-                    parsedData = selectedView.treeDataJson || selectedView.treeData || [];
+                await activateVirtualViewApi(workspaceId, selectedView.id, selectedBranch); 
+                setSavedViews(prev => prev.map(v => ({
+                    ...v,
+                    isActive: v.id === selectedView.id,
+                    active: v.id === selectedView.id
+                })));
+
+                if (selectedBranch === activeBranch) {
+                    dispatch(setVirtualTree({
+                        name: selectedView.viewName || selectedView.name || '가상 뷰',
+                        children: editableTreeData, // 💡 Redux에도 수정된 데이터를 반영!
+                        branchName: selectedBranch 
+                    })); 
                 }
 
-                dispatch(setVirtualTree({
-                    name: selectedView.viewName || selectedView.name || '가상 뷰',
-                    children: parsedData
-                })); 
-
-                alert(`'${selectedView.viewName || selectedView.name || '새로운 가상'}' 뷰가 탐색기에 적용되었습니다!`);
+                alert(`'${selectedView.viewName || selectedView.name || '새로운 가상'}' 뷰가 적용되었습니다!`);
             } catch (error) {
                 alert("뷰 적용에 실패했습니다: " + error.message);
+            }
+        }
+    };
+
+    // =========================================================================
+    // 💡 [핵심] 파일 드래그 앤 드롭 이동을 처리하는 사령관 함수
+    // =========================================================================
+    const handleDropFile = async (targetFolderName, draggedFile, sourceFolderName) => {
+        // 1. 상태를 깊은 복사해서 꼬임 방지
+        const newData = JSON.parse(JSON.stringify(editableTreeData));
+
+        const sourceFolder = newData.find(f => f.name === sourceFolderName);
+        const targetFolder = newData.find(f => f.name === targetFolderName);
+
+        if (sourceFolder && targetFolder) {
+            // 2. 원래 폴더에서 파일 빼기
+            sourceFolder.children = sourceFolder.children.filter(f => f.realPath !== draggedFile.realPath);
+            // 3. 목적지 폴더에 파일 밀어 넣기
+            targetFolder.children.push(draggedFile);
+            
+            // 4. 화면을 0.1초 만에 즉각적으로 바꿔서 딜레이 없게 만들기 (Optimistic Update)
+            setEditableTreeData(newData);
+
+            // 5. 백엔드 DB에 조용히 저장하기
+            try {
+                const newDataJson = JSON.stringify(newData);
+                await updateVirtualViewApi(workspaceId, selectedView.id, newDataJson);
+                
+                // 6. 로컬의 savedViews 목록도 최신화
+                setSavedViews(prev => prev.map(v => 
+                    v.id === selectedView.id ? { ...v, treeDataJson: newDataJson } : v
+                ));
+
+                // 7. 만약 이 뷰가 IDE에 적용 중인 뷰라면, 에디터 화면(Redux)도 실시간 갱신!
+                if (selectedView.isActive === true || selectedView.active === true) {
+                    if (selectedBranch === activeBranch) {
+                        dispatch(setVirtualTree({
+                            name: selectedView.viewName || selectedView.name || '가상 뷰',
+                            children: newData,
+                            branchName: selectedBranch 
+                        }));
+                    }
+                }
+            } catch (e) {
+                alert("구조 업데이트 중 서버 통신 에러가 발생했습니다: " + e.message);
+                // 에러 나면 원래대로 슬쩍 돌려놓기 (안전장치)
+                setEditableTreeData(getParsedTreeData(selectedView));
             }
         }
     };
@@ -275,7 +395,6 @@ export default function ResourceRelocation() {
         <div className="w-screen h-screen bg-[#f3f4f6] flex flex-col font-sans overflow-hidden relative">
             <MenuBar />
 
-            {/* 💡 AI 생성 중일 때 나타나는 로딩 팝업 오버레이 */}
             {isGenerating && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center border border-gray-100">
@@ -321,11 +440,9 @@ export default function ResourceRelocation() {
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                                 {workspaces.map((ws) => {
                                     const targetId = ws.uuid || ws.id || ws.workspaceId;
-                                    const isTeam = ws.type === 'team' || JSON.parse(localStorage.getItem('teamWorkspaces') || '[]').includes(targetId);
-                                    
                                     return (
                                         <div key={targetId} onClick={() => handleSelectWorkspace(ws)}
-                                            className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-lg hover:-translate-y-1 cursor-pointer transition-all relative group flex flex-col h-[160px]">
+                                             className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm hover:shadow-lg hover:-translate-y-1 cursor-pointer transition-all relative group flex flex-col h-[160px]">
                                             <div className="flex justify-between items-start mb-4">
                                                 <div className="flex items-center gap-3">
                                                     <VscFolderOpened className="text-yellow-500 text-3xl drop-shadow-sm" />
@@ -355,6 +472,17 @@ export default function ResourceRelocation() {
                                         </span>
                                     )}
                                 </h1>
+                                
+                                <div className="ml-4 flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-gray-200 shadow-sm">
+                                    <VscRepoForked className="text-gray-500" size={18} />
+                                    <select 
+                                        value={selectedBranch} 
+                                        onChange={(e) => setSelectedBranch(e.target.value)}
+                                        className="bg-transparent border-none text-[13px] font-bold text-gray-700 focus:outline-none cursor-pointer"
+                                    >
+                                        {branches.map(b => <option key={b} value={b}>{b}</option>)}
+                                    </select>
+                                </div>
                             </div>
                             <button onClick={() => navigate(getWorkspacePath(workspaceId))} className="px-6 py-2.5 bg-[#111827] text-white text-[13px] font-bold rounded-xl hover:bg-black transition-colors flex items-center gap-2 shadow-md shadow-gray-400/20">
                                 IDE 에디터로 돌아가기 <VscArrowRight />
@@ -364,7 +492,7 @@ export default function ResourceRelocation() {
                         <div className="bg-white rounded-3xl shadow-lg border border-gray-200 flex flex-col overflow-hidden flex-1 mb-4">
                             <div className="p-6 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-b border-gray-200 shrink-0">
                                 <h3 className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2 mb-3">
-                                    <VscSparkle className="text-blue-600" size={18} /> AI에게 새로운 분류(뷰) 생성을 요청해보세요
+                                    <VscSparkle className="text-blue-600" size={18} /> AI에게 새로운 분류(뷰) 생성을 요청해보세요 <span className="text-gray-500 text-[12px] font-normal ml-2">({selectedBranch} 브랜치 기준)</span>
                                 </h3>
                                 <div className="flex gap-3">
                                     <input 
@@ -388,7 +516,7 @@ export default function ResourceRelocation() {
                             <div className="flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x border-gray-200 flex-1 min-h-[500px] overflow-hidden">
                                 <div className="w-[320px] bg-[#fafafa] flex flex-col shrink-0">
                                     <div className="px-6 py-4 border-b border-gray-200 bg-white font-extrabold text-[13px] text-gray-700 flex justify-between items-center shadow-sm z-10">
-                                        저장된 뷰 목록 (Views)
+                                        {selectedBranch} 브랜치 뷰 목록
                                     </div>
                                     <div className="p-4 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
                                         <div 
@@ -401,7 +529,7 @@ export default function ResourceRelocation() {
                                                 <div className={`text-[13px] font-bold ${selectedView === null ? 'text-blue-800' : 'text-gray-700'}`}>실제 탐색기 원본 구조</div>
                                                 <div className="text-[11px] text-gray-400 mt-0.5">물리적인 실제 폴더 구조</div>
                                             </div>
-                                            {!isVirtualMode && <span className="px-2 py-1 bg-gray-800 text-white text-[10px] font-bold rounded-md shadow-sm">IDE 적용중</span>}
+                                            {isOriginalActive && <span className="px-2 py-1 bg-gray-800 text-white text-[10px] font-bold rounded-md shadow-sm">적용중</span>}
                                         </div>
 
                                         <div className="h-px bg-gray-200 my-4 mx-2"></div>
@@ -431,8 +559,8 @@ export default function ResourceRelocation() {
                                                 </div>
                                                 <p className="text-[11px] text-gray-500 truncate pl-6 leading-tight" title={view.prompt}>{view.prompt || "AI가 생성한 가상 폴더 구조"}</p>
 
-                                                {isVirtualMode && virtualTree?.name === (view.viewName || view.name) && (
-                                                    <span className="absolute top-3.5 right-3 px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded-md shadow-sm">IDE 적용중</span>
+                                                {(view.isActive === true || view.active === true) && (
+                                                    <span className="absolute top-3.5 right-3 px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded-md shadow-sm">적용중</span>
                                                 )}
 
                                                 <button 
@@ -451,26 +579,32 @@ export default function ResourceRelocation() {
                                     <div className="px-8 py-4 border-b border-gray-200 bg-white flex justify-between items-center z-10 shadow-sm">
                                         <span className="text-[14px] font-extrabold text-gray-800 flex items-center gap-2">
                                             {selectedView === null ? (
-                                                <><VscFolderOpened className="text-yellow-500" size={20}/> 원본 구조 프리뷰</>
+                                                <><VscFolderOpened className="text-yellow-500" size={20}/> 원본 구조 프리뷰 ({selectedBranch})</>
                                             ) : (
                                                 <><VscSparkle className="text-indigo-500" size={20}/> 가상 뷰 프리뷰: <span className="text-indigo-700">{selectedView.viewName || selectedView.name}</span></>
                                             )}
                                         </span>
 
                                         {selectedView === null ? (
-                                            isVirtualMode ? (
+                                            !isOriginalActive ? (
                                                 <button onClick={handleApply} className="px-5 py-2.5 text-[12px] font-extrabold bg-gray-800 text-white rounded-xl hover:bg-black transition-all flex items-center gap-2 shadow-md hover:shadow-lg">
                                                     <VscCheck size={16}/> 원본 구조로 복구 (적용)
                                                 </button>
                                             ) : (
                                                 <span className="px-4 py-2 text-[12px] font-bold bg-gray-100 text-gray-400 border border-gray-200 rounded-xl flex items-center gap-2 cursor-not-allowed">
-                                                    <VscCheck size={16}/> 이미 IDE에 적용되어 있습니다
+                                                    <VscCheck size={16}/> 이미 적용되어 있습니다
                                                 </span>
                                             )
                                         ) : (
-                                            <button onClick={handleApply} className="px-5 py-2.5 text-[12px] font-extrabold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-md shadow-indigo-200 hover:shadow-lg">
-                                                <VscCheck size={16}/> 이 가상 뷰를 IDE 탐색기에 적용하기
-                                            </button>
+                                            !(selectedView.isActive === true || selectedView.active === true) ? (
+                                                <button onClick={handleApply} className="px-5 py-2.5 text-[12px] font-extrabold bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-md shadow-indigo-200 hover:shadow-lg">
+                                                    <VscCheck size={16}/> 이 가상 뷰를 적용하기
+                                                </button>
+                                            ) : (
+                                                <span className="px-4 py-2 text-[12px] font-bold bg-gray-100 text-gray-400 border border-gray-200 rounded-xl flex items-center gap-2 cursor-not-allowed">
+                                                    <VscCheck size={16}/> 이미 적용되어 있습니다
+                                                </span>
+                                            )
                                         )}
                                     </div>
                                     
@@ -478,9 +612,16 @@ export default function ResourceRelocation() {
                                         <div className="max-w-4xl mx-auto border border-gray-200 rounded-2xl p-8 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white">
                                             <div className="space-y-1">
                                                 {selectedView === null ? (
-                                                    tree?.children ? tree.children.map(child => <OriginalTree key={child.id} node={child} />) : <div className="text-xs text-gray-400 p-4">원본 파일이 없습니다.</div>
+                                                    tree?.children ? tree.children.map((child, idx) => <OriginalTree key={child.id || `orig-${idx}`} node={child} />) : <div className="text-xs text-gray-400 p-4">원본 파일이 없습니다.</div>
                                                 ) : (
-                                                    (typeof selectedView.treeDataJson === 'string' ? JSON.parse(selectedView.treeDataJson) : (selectedView.treeDataJson || selectedView.treeData))?.map(folder => <VirtualFolderTree key={folder.id || folder.name} folder={folder} />)
+                                                    // 💡 [핵심] editableTreeData를 사용하여 렌더링하고 onDropFile 이벤트를 전달!
+                                                    editableTreeData.map((folder, idx) => (
+                                                        <VirtualFolderTree 
+                                                            key={folder.name || `virt-folder-${idx}`} 
+                                                            folder={folder} 
+                                                            onDropFile={handleDropFile} 
+                                                        />
+                                                    ))
                                                 )}
                                             </div>
                                         </div>

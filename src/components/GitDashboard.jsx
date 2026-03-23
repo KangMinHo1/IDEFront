@@ -1,12 +1,22 @@
-// src/components/GitDashboard.jsx
+// 경로: src/components/GitDashboard.jsx
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { VscSourceControl, VscRepo, VscRepoForked, VscRecord, VscCloudDownload, VscCloudUpload, VscCheck, VscDiffAdded, VscDiffModified, VscDiffRemoved, VscArrowDown, VscArrowUp, VscRefresh, VscKey, VscHistory, VscGithubInverted, VscWarning, VscClose } from "react-icons/vsc";
-import { setActiveProject, setActiveBranch, closeAllFiles } from '../store/slices/fileSystemSlice';
-import { updateProjectGitInfo } from '../store/slices/fileSystemSlice'; 
-import { fetchGitStatusApi, stageFilesApi, unstageFilesApi, commitChangesApi, fetchBranchListApi, pushToRemoteApi, pullFromRemoteApi, fetchGitHistoryApi, resetCommitApi, checkoutCommitApi, mergeCommitApi, updateGitUrlApi, abortMergeApi } from '../utils/api'; 
-// 💡 [핵심] 외부에서 분리한 정교한 그래프 렌더러를 불러옵니다. (이제 아래에 중복된 함수가 없습니다!)
+import { 
+    VscSourceControl, VscRepo, VscRepoForked, VscRecord, VscCloudDownload, 
+    VscCloudUpload, VscCheck, VscDiffAdded, VscDiffModified, VscDiffRemoved, 
+    VscArrowDown, VscArrowUp, VscRefresh, VscKey, VscHistory, VscGithubInverted, 
+    VscWarning, VscClose, VscTrash // 💡 [추가] 휴지통 아이콘
+} from "react-icons/vsc";
+
+// 💡 [추가] clearVirtualTree 가져오기
+import { setActiveProject, setActiveBranch, closeAllFiles, updateProjectGitInfo, clearVirtualTree } from '../store/slices/fileSystemSlice';
+import { 
+    fetchGitStatusApi, stageFilesApi, unstageFilesApi, commitChangesApi, 
+    fetchBranchListApi, pushToRemoteApi, pullFromRemoteApi, fetchGitHistoryApi, 
+    resetCommitApi, checkoutCommitApi, mergeCommitApi, updateGitUrlApi, abortMergeApi,
+    deleteBranchApi // 💡 [추가] 삭제 API 가져오기
+} from '../utils/api'; 
 import { renderGraph } from '../utils/gitGraphHelper';
 
 export default function GitDashboard() {
@@ -33,13 +43,21 @@ export default function GitDashboard() {
     const authorName = "노민주"; 
     const authorEmail = "minju@webide.com"; 
 
+    // 커밋 히스토리용 우클릭 메뉴
     const [contextMenu, setContextMenu] = useState(null);
     const contextMenuRef = useRef(null);
+
+    // 💡 [NEW] 브랜치 목록용 우클릭 메뉴 상태
+    const [branchContextMenu, setBranchContextMenu] = useState(null);
+    const branchContextMenuRef = useRef(null);
 
     useEffect(() => {
         const handleClickOutside = (e) => {
             if (contextMenuRef.current && !contextMenuRef.current.contains(e.target)) {
                 setContextMenu(null);
+            }
+            if (branchContextMenuRef.current && !branchContextMenuRef.current.contains(e.target)) {
+                setBranchContextMenu(null);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -85,8 +103,58 @@ export default function GitDashboard() {
 
     useEffect(() => { loadGitStatus(); }, [workspaceId, activeProject, activeBranch, activeView]);
 
-    const handleProjectChange = (e) => { dispatch(setActiveProject(e.target.value)); dispatch(setActiveBranch("master")); setActiveView('status'); };
-    const handleBranchChange = (branchName) => { if (branchName !== activeBranch) { dispatch(closeAllFiles()); dispatch(setActiveBranch(branchName)); } };
+    const handleProjectChange = (e) => { 
+        dispatch(setActiveProject(e.target.value)); 
+        dispatch(setActiveBranch("master")); 
+        setActiveView('status'); 
+    };
+    
+    const handleBranchChange = (branchName) => { 
+        if (branchName !== activeBranch) { 
+            dispatch(closeAllFiles()); 
+            dispatch(clearVirtualTree()); // 💡 변경 시 가상 뷰 해제
+            dispatch(setActiveBranch(branchName)); 
+        } 
+    };
+
+    // =========================================================================
+    // 💡 [NEW] 브랜치 우클릭 및 삭제 로직
+    // =========================================================================
+    const handleBranchRightClick = (e, branchName) => {
+        e.preventDefault();
+        // 마스터 브랜치는 우클릭 삭제 메뉴 안 띄움
+        if (branchName === 'master') return; 
+        setBranchContextMenu({ x: e.pageX, y: e.pageY, branch: branchName });
+    };
+
+    const handleDeleteBranch = async () => {
+        if (!branchContextMenu) return;
+        const branchName = branchContextMenu.branch;
+        setBranchContextMenu(null);
+
+        if (!window.confirm(`정말 '${branchName}' 브랜치를 삭제하시겠습니까?\n(해당 브랜치의 파일이 영구 삭제됩니다!)`)) return;
+
+        try {
+            setIsLoading(true);
+            await deleteBranchApi(workspaceId, activeProject, branchName);
+            
+            // 삭제 후 로컬 브랜치 목록 갱신
+            setBranchList(prev => prev.filter(b => b !== branchName));
+            alert(`'${branchName}' 브랜치가 삭제되었습니다.`);
+
+            // 삭제한 브랜치가 현재 켜져 있는 브랜치라면 마스터로 피신!
+            if (activeBranch === branchName) {
+                dispatch(closeAllFiles());
+                dispatch(clearVirtualTree());
+                dispatch(setActiveBranch('master'));
+            }
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    // =========================================================================
 
     const handleStage = async (filePattern) => { try { setIsLoading(true); await stageFilesApi(workspaceId, activeProject, activeBranch || 'master', filePattern); await loadGitStatus(); } catch (error) { alert(error.message); } finally { setIsLoading(false); } };
     const handleUnstage = async (filePattern) => { try { setIsLoading(true); await unstageFilesApi(workspaceId, activeProject, activeBranch || 'master', filePattern); await loadGitStatus(); } catch (error) { alert(error.message); } finally { setIsLoading(false); } };
@@ -225,6 +293,7 @@ export default function GitDashboard() {
     return (
         <div className="flex-1 flex h-full w-full bg-white font-sans text-[#333] relative">
             
+            {/* 커밋 히스토리 우클릭 메뉴 */}
             {contextMenu && (
                 <div ref={contextMenuRef} className="fixed bg-white border border-gray-200 shadow-xl rounded-md py-1 z-[9999] text-sm text-gray-700 w-72" style={{ top: contextMenu.y, left: contextMenu.x }}>
                     <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="font-mono text-xs font-bold text-blue-600">Commit: {contextMenu.commit.hash.substring(0,7)}</span></div>
@@ -234,21 +303,67 @@ export default function GitDashboard() {
                 </div>
             )}
 
+            {/* 💡 [NEW] 브랜치 전용 우클릭 휴지통 메뉴 */}
+            {branchContextMenu && (
+                <div ref={branchContextMenuRef} className="fixed bg-white border border-gray-200 shadow-xl rounded-md py-1 z-[9999] text-sm text-gray-700 w-48" style={{ top: branchContextMenu.y, left: branchContextMenu.x }}>
+                    <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50"><span className="font-mono text-xs font-bold text-gray-600">Branch: {branchContextMenu.branch}</span></div>
+                    <div onClick={handleDeleteBranch} className="px-4 py-2 hover:bg-red-50 hover:text-red-600 cursor-pointer transition-colors flex items-center gap-2 text-red-500 font-bold">
+                        <VscTrash size={16}/> 브랜치 삭제
+                    </div>
+                </div>
+            )}
+
+            {/* 모달 창들 */}
             {showGitUrlModal && (
                 <div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center"><div className="bg-white rounded-lg shadow-xl w-96 p-6 flex flex-col gap-4 animate-fade-in-up"><div className="flex items-center gap-2 text-lg font-bold text-gray-800"><VscGithubInverted size={20} className="text-gray-800"/> 원격 저장소 연동</div><p className="text-sm text-gray-600 leading-relaxed">해당 프로젝트에 연결된 GitHub 저장소가 없습니다.<br/>Push/Pull을 위해 먼저 URL을 연동해주세요.</p><input type="text" placeholder="https://github.com/username/repo.git" value={inputGitUrl} onChange={(e) => setInputGitUrl(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') handleLinkGitUrlAndProceed(); }} className="w-full border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500"/><div className="flex justify-end gap-2 mt-2"><button onClick={() => setShowGitUrlModal(false)} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded transition-colors">취소</button><button onClick={handleLinkGitUrlAndProceed} disabled={!inputGitUrl.trim() || isLoading} className="px-4 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-black rounded transition-colors flex items-center gap-1 disabled:opacity-50">연동하기</button></div></div></div>
             )}
 
             {showTokenModal && (<div className="absolute inset-0 bg-black/40 z-[9999] flex items-center justify-center"><div className="bg-white rounded-lg shadow-xl w-96 p-6 flex flex-col gap-4 animate-fade-in-up"><div className="flex items-center gap-2 text-lg font-bold text-gray-800"><VscKey size={20} className="text-amber-500"/> GitHub Token 인증</div><p className="text-sm text-gray-600 leading-relaxed">{modalAction === 'push' ? '원격 저장소로 푸시' : '원격 저장소에서 풀(Pull)'} 작업을 위해 PAT가 필요합니다.</p><input type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxx" value={githubToken} onChange={(e) => setGithubToken(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter') executeRemoteAction(); }} className="w-full border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500 font-mono"/><div className="flex justify-end gap-2 mt-2"><button onClick={() => setShowTokenModal(false)} className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded transition-colors">취소</button><button onClick={executeRemoteAction} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors flex items-center gap-1">{modalAction === 'push' ? <VscCloudUpload size={16}/> : <VscCloudDownload size={16}/>} 실행</button></div></div></div>)}
+            
             {isLoading && (<div className="absolute inset-0 bg-white/50 z-50 flex items-center justify-center"><div className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded shadow-lg font-bold text-sm"><VscRefresh className="animate-spin" size={16}/> 처리 중...</div></div>)}
             
+            {/* 좌측 사이드바 영역 */}
             <div className="w-64 border-r border-gray-200 bg-[#f8f9fa] flex flex-col shrink-0">
-                <div className="h-14 flex items-center px-4 border-b border-gray-200 bg-white hover:bg-gray-50 transition-colors cursor-pointer"><VscRepo size={18} className="text-blue-600 mr-2 shrink-0" /><select value={activeProject || ""} onChange={handleProjectChange} className="font-bold text-sm bg-transparent outline-none cursor-pointer flex-1 truncate text-gray-800"><option value="" disabled>프로젝트 선택</option>{projectList.map(p => (<option key={p.name} value={p.name}>{p.name}</option>))}</select></div>
+                <div className="h-14 flex items-center px-4 border-b border-gray-200 bg-white hover:bg-gray-50 transition-colors cursor-pointer">
+                    <VscRepo size={18} className="text-blue-600 mr-2 shrink-0" />
+                    <select value={activeProject || ""} onChange={handleProjectChange} className="font-bold text-sm bg-transparent outline-none cursor-pointer flex-1 truncate text-gray-800">
+                        <option value="" disabled>프로젝트 선택</option>
+                        {projectList.map(p => (<option key={p.name} value={p.name}>{p.name}</option>))}
+                    </select>
+                </div>
                 <div className="p-4 flex-1 overflow-y-auto">
-                    <div className="mb-6"><div className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Workspace</div><div onClick={() => setActiveView('status')} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer font-medium text-[13px] transition-colors ${activeView === 'status' ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'}`}><VscRecord size={16}/> File Status</div><div onClick={() => setActiveView('history')} className={`flex items-center gap-2 px-2 py-1.5 mt-1 rounded cursor-pointer font-medium text-[13px] transition-colors ${activeView === 'history' ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'}`}><VscHistory size={16}/> History</div></div>
-                    <div><div className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider flex items-center justify-between"><span>Branches</span><span className="bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded text-[10px]">{branchList.length}</span></div><div className="mt-1 flex flex-col gap-0.5">{branchList.map(branch => (<div key={branch} onClick={() => handleBranchChange(branch)} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-[13px] transition-colors ${branch === (activeBranch || 'master') ? 'text-gray-800 font-bold bg-gray-100 border-l-2 border-blue-500' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-800'}`}><VscRepoForked size={16} className={branch === (activeBranch || 'master') ? "text-blue-600" : "text-gray-400"}/> <span className="truncate">{branch}</span></div>))}</div></div>
+                    <div className="mb-6">
+                        <div className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Workspace</div>
+                        <div onClick={() => setActiveView('status')} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer font-medium text-[13px] transition-colors ${activeView === 'status' ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'}`}><VscRecord size={16}/> File Status</div>
+                        <div onClick={() => setActiveView('history')} className={`flex items-center gap-2 px-2 py-1.5 mt-1 rounded cursor-pointer font-medium text-[13px] transition-colors ${activeView === 'history' ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'}`}><VscHistory size={16}/> History</div>
+                    </div>
+                    
+                    <div>
+                        <div className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider flex items-center justify-between">
+                            <span>Branches</span>
+                            <span className="bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded text-[10px]">{branchList.length}</span>
+                        </div>
+                        <div className="mt-1 flex flex-col gap-0.5">
+                            {/* 💡 [NEW] 브랜치 렌더링 영역 (우클릭 이벤트 연결) */}
+                            {branchList.map(branch => (
+                                <div 
+                                    key={branch} 
+                                    onClick={() => handleBranchChange(branch)} 
+                                    onContextMenu={(e) => handleBranchRightClick(e, branch)}
+                                    className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded cursor-pointer text-[13px] transition-colors ${branch === (activeBranch || 'master') ? 'text-gray-800 font-bold bg-gray-100 border-l-2 border-blue-500' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-800'}`}
+                                >
+                                    <div className="flex items-center gap-2 truncate">
+                                        <VscRepoForked size={16} className={branch === (activeBranch || 'master') ? "text-blue-600" : "text-gray-400"}/> 
+                                        <span className="truncate">{branch}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </div>
 
+            {/* 우측 메인 영역 */}
             <div className="flex-1 flex flex-col min-w-0 bg-[#fefefe] relative">
                 <div className="h-14 border-b border-gray-200 bg-white flex items-center justify-between px-6 shrink-0">
                     <div className="flex items-center gap-4">
@@ -322,7 +437,6 @@ export default function GitDashboard() {
                                             onContextMenu={(e) => handleRightClick(e, log)}
                                             className={`flex px-4 hover:bg-blue-50 transition-colors cursor-pointer items-center text-[13px] group h-6`}
                                         >
-                                            {/* 💡 [수정됨] renderGraph 함수 적용! */}
                                             <div className="w-24 shrink-0 h-full flex items-center justify-start pl-2 font-mono select-none overflow-visible">
                                                 {renderGraph(log.graph)}
                                             </div>

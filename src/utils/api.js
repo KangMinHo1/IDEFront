@@ -375,20 +375,21 @@ export const getWorkspaceMembersApi = async (workspaceId) => {
     return await response.json();
 };
 
+// 💡 [수정] userId가 없으면 서버에 요청하지 않고 즉시 방어! (500 에러 해결)
 export const fetchChatHistoryApi = async (workspaceId, userId) => {
+    if (!userId) return []; 
     const response = await authFetch(`http://localhost:8080/api/workspaces/${workspaceId}/chat?userId=${userId}`);
     if (!response.ok) throw new Error("채팅 내역을 불러오지 못했습니다.");
     return await response.json();
 };
 
-
 // ============================================================================
 // ✨ [NEW] 자료 재배치 (가상 뷰) API (rearrange-controller 연동 완벽 동기화)
 // ============================================================================
 
-// 💡 백엔드 GET /api/workspaces/{workspaceId}/rearrange 매핑 (목록 전체 불러오기)
-export const fetchVirtualViewsApi = async (workspaceId) => {
-    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange`);
+// 💡 1. [핵심 수정] branchName을 파라미터로 받고 URL에 붙여서 보냅니다!
+export const fetchVirtualViewsApi = async (workspaceId, branchName = "master") => {
+    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange?branchName=${encodeURIComponent(branchName)}`);
     if (!response.ok) throw new Error("가상 뷰 목록을 불러오지 못했습니다.");
     
     const text = await response.text();
@@ -396,14 +397,21 @@ export const fetchVirtualViewsApi = async (workspaceId) => {
     try { return JSON.parse(text); } catch (e) { return []; }
 };
 
-// 💡 백엔드 RearrangeRequest DTO에 맞춰 workspaceId, viewName, prompt 전달!
-export const generateVirtualViewApi = async (workspaceId, viewName, prompt) => {
+export const generateVirtualViewApi = async (workspaceId, viewName, prompt, branchName = "master") => {
     const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/generate`, {
         method: 'POST',
-        // 백엔드 엔티티의 필드명과 정확히 일치시킵니다. (projectName은 제외됨)
-        body: JSON.stringify({ workspaceId, viewName, prompt }) 
+        body: JSON.stringify({ 
+            workspaceId, 
+            viewName, 
+            prompt,
+            branchName // 💡 브랜치명 포함
+        }) 
     });
     
+    if (response.status === 409) {
+        throw new Error("이미 동일한 이름으로 생성된 뷰가 있습니다. 다른 내용으로 생성해 주세요! 😅");
+    }
+
     if (!response.ok) {
         const errMsg = await response.text();
         throw new Error(errMsg || "AI 가상 뷰 생성에 실패했습니다.");
@@ -411,7 +419,6 @@ export const generateVirtualViewApi = async (workspaceId, viewName, prompt) => {
     return await response.json();
 };
 
-// 💡 (주의) 백엔드 컨트롤러에 Delete API가 아직 없다면 404가 날 수 있습니다.
 export const deleteVirtualViewApi = async (workspaceId, viewId) => {
     const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${viewId}`, {
         method: 'DELETE'
@@ -420,20 +427,45 @@ export const deleteVirtualViewApi = async (workspaceId, viewId) => {
     return true;
 };
 
-// 💡 특정 가상 트리를 에디터에 적용
-export const activateVirtualViewApi = async (workspaceId, treeId) => { 
-    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${treeId}/activate`, {
+// 💡 적용할 때도 브랜치명 포함
+export const activateVirtualViewApi = async (workspaceId, treeId, branchName = "master") => { 
+    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${treeId}/activate?branchName=${encodeURIComponent(branchName)}`, {
         method: 'POST'
     });
     if (!response.ok) throw new Error("가상 뷰 활성화(Activate)에 실패했습니다.");
     return true;
 };
 
-// 💡 원본 구조로 복구
-export const deactivateVirtualViewApi = async (workspaceId) => { 
-    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/deactivate`, {
+// 💡 해제할 때도 브랜치명 포함
+export const deactivateVirtualViewApi = async (workspaceId, branchName = "master") => { 
+    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/deactivate?branchName=${encodeURIComponent(branchName)}`, {
         method: 'POST'
     });
     if (!response.ok) throw new Error("가상 뷰 비활성화(Deactivate)에 실패했습니다.");
     return true;
+};
+
+// 💡 [NEW] 드래그 앤 드롭으로 수정한 트리 구조를 백엔드에 덮어씌우는 API
+export const updateVirtualViewApi = async (workspaceId, treeId, treeDataJson) => {
+    const response = await authFetch(`${API_BASE}/${workspaceId}/rearrange/${treeId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ 
+            treeDataJson: typeof treeDataJson === 'string' ? treeDataJson : JSON.stringify(treeDataJson) 
+        })
+    });
+    if (!response.ok) throw new Error("뷰 구조 업데이트에 실패했습니다.");
+    return true;
+};
+
+// 💡 [NEW] 브랜치 삭제 API (맨 아래에 추가해주세요!)
+export const deleteBranchApi = async (workspaceId, projectName, branchName) => {
+    const response = await authFetch(`${GIT_API_BASE}/${workspaceId}/${encodeURIComponent(projectName)}/branches/${encodeURIComponent(branchName)}`, {
+        method: "DELETE"
+    });
+    
+    if (!response.ok) {
+        const msg = await response.text();
+        throw new Error(msg || "브랜치 삭제에 실패했습니다.");
+    }
+    return await response.text();
 };

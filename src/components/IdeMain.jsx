@@ -1,3 +1,4 @@
+// 경로: src/pages/IdeMain.jsx
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams } from 'react-router-dom';
@@ -15,9 +16,9 @@ import CommandPalette from './CommandPalette';
 import GitDashboard from './GitDashboard'; 
 import CodeMap from './CodeMap'; 
 
-import { fetchWorkspaceProjectsApi } from '../utils/api'; 
-import { setWorkspaceTree, setWorkspaceId, setProjectList } from '../store/slices/fileSystemSlice'; 
-import { VscClose, VscWand } from 'react-icons/vsc';
+// 💡 [수정] setActiveProject 를 추가로 임포트합니다!
+import { fetchWorkspaceProjectsApi, fetchVirtualViewsApi } from '../utils/api'; 
+import { setWorkspaceTree, setWorkspaceId, setProjectList, setVirtualTree, clearVirtualTree, setActiveProject } from '../store/slices/fileSystemSlice'; 
 
 const DocsPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">Docs Panel</div>; 
 const ApiTestPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">API Test Panel</div>;
@@ -28,19 +29,64 @@ export default function IdeMain() {
   const dispatch = useDispatch();
 
   const { activeActivity, isTerminalVisible, isSidebarVisible, isAgentVisible, isDebugMode, codeMapMode } = useSelector(state => state.ui);
-  const { workspaceId, activeProject } = useSelector(state => state.fileSystem);
+  
+  const { workspaceId, activeProject, activeBranch } = useSelector(state => state.fileSystem);
 
-  // 💡 [수정] 부모의 조건부 렌더링에 쓰이던 불필요한 변수 삭제
-
+  // =========================================================================
+  // 💡 [핵심 버그 수정] 새로고침(F5) 시 데드락 방지 로직
+  // =========================================================================
   useEffect(() => {
     if (id) {
       dispatch(setWorkspaceId(id));
       fetchWorkspaceProjectsApi(id).then(root => {
         dispatch(setWorkspaceTree(root));
-        if (root.children) dispatch(setProjectList(root.children));
+        if (root.children && root.children.length > 0) {
+            dispatch(setProjectList(root.children));
+            
+            // 💡 [NEW] 새로고침으로 인해 activeProject가 날아갔다면?
+            // 무조건 트리의 첫 번째 프로젝트를 강제로 시작 프로젝트로 지정합니다!
+            if (!activeProject) {
+                dispatch(setActiveProject(root.children[0].name));
+            }
+        }
       }).catch(console.error);
     }
-  }, [id, dispatch]);
+    // eslint-disable-next-line
+  }, [id, dispatch]); 
+  // =========================================================================
+
+  useEffect(() => {
+      if (workspaceId && activeBranch) {
+          const syncBranchVirtualView = async () => {
+              try {
+                  const views = await fetchVirtualViewsApi(workspaceId, activeBranch);
+                  
+                  const activeView = views.find(v => v.isActive === true || v.active === true);
+
+                  if (activeView) {
+                      let parsedData = [];
+                      if (typeof activeView.treeDataJson === 'string') {
+                          parsedData = JSON.parse(activeView.treeDataJson);
+                      } else {
+                          parsedData = activeView.treeDataJson || activeView.treeData || [];
+                      }
+                      
+                      dispatch(setVirtualTree({
+                          name: activeView.viewName || activeView.name || '가상 뷰',
+                          children: parsedData,
+                          branchName: activeBranch
+                      }));
+                  } else {
+                      dispatch(clearVirtualTree());
+                  }
+              } catch (error) {
+                  console.error("브랜치 전환 시 가상 뷰 동기화 실패:", error);
+                  dispatch(clearVirtualTree()); 
+              }
+          };
+          syncBranchVirtualView();
+      }
+  }, [workspaceId, activeBranch, dispatch]);
 
   const renderMainContent = () => {
     switch (activeActivity) {
@@ -54,7 +100,7 @@ export default function IdeMain() {
                 <div className="flex-1 flex overflow-hidden">
                     {isSidebarVisible && (
                         <div className="w-[260px] shrink-0 border-r border-gray-200 flex flex-col bg-[#f8f9fa]">
-                           <Sidebar />
+                            <Sidebar />
                         </div>
                     )}
                     
@@ -63,8 +109,6 @@ export default function IdeMain() {
                         <div className="flex-1 flex relative overflow-hidden">
                             <div className="flex-1 flex flex-col min-w-0 relative">
                                 <CodeEditor />
-                                
-                                {/* 💡 [핵심 수정] 조건부 렌더링을 없애고 CodeMap을 무조건 마운트합니다. (숨김/표시는 CodeMap 내부에서 알아서 처리) */}
                                 <CodeMap />
                             </div>
                         </div>

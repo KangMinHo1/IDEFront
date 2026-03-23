@@ -1,16 +1,17 @@
+// 경로: src/components/MenuBar.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { setActiveBranch, closeAllFiles, closeFile, openCodeMapTab } from '../store/slices/fileSystemSlice';
+import { setActiveBranch, closeAllFiles, closeFile, openCodeMapTab, clearVirtualTree } from '../store/slices/fileSystemSlice';
 import { openProjectModal, setDebugMode, writeToTerminal, setActiveBottomTab, triggerEditorCmd, toggleTerminal, toggleSidebar, setCodeMapMode } from '../store/slices/uiSlice';
 import { DebugSocket } from '../utils/debugSocket'; 
 import { RunSocket } from '../utils/runSocket'; 
 import { 
     VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh, 
-    VscClose, VscOrganization, VscMic, VscAccount, VscMail, VscCopy, VscCheck, VscMute, VscKey
+    VscClose, VscOrganization, VscMic, VscAccount, VscMail, VscCopy, VscCheck, VscMute, VscKey, VscTrash // 💡 [수정] VscTrash 추가
 } from "react-icons/vsc";
-// 💡 [수정] getUserProfileApi 임포트 추가!
-import { fetchBranchListApi, createBranchApi, saveFileApi, getWorkspaceMembersApi, inviteWorkspaceMemberApi, getUserProfileApi } from '../utils/api'; 
+// 💡 [수정] deleteBranchApi 추가 임포트
+import { fetchBranchListApi, createBranchApi, saveFileApi, getWorkspaceMembersApi, inviteWorkspaceMemberApi, getUserProfileApi, deleteBranchApi } from '../utils/api'; 
 import { useAuth } from '../utils/AuthContext'; 
 
 const getLanguageFromPath = (path) => {
@@ -36,7 +37,6 @@ export default function MenuBar({ mode = 'personal' }) {
   const dispatch = useDispatch();
   const { user } = useAuth(); 
   
-  // 💡 [NEW] 확실한 내 프로필 상태 저장
   const [myProfile, setMyProfile] = useState(null);
 
   const { workspaceId, activeProject, activeBranch, fileContents, activeFileId } = useSelector(state => state.fileSystem);
@@ -66,7 +66,6 @@ export default function MenuBar({ mode = 'personal' }) {
 
   const isRelocationPage = location.pathname.includes('/relocation') || location.pathname.includes('/rearrange');
 
-  // 💡 [NEW] 컴포넌트 마운트 시 내 프로필 정보 확실하게 땡겨오기
   useEffect(() => {
       if (user && user.id) {
           getUserProfileApi(user.id)
@@ -118,16 +117,22 @@ export default function MenuBar({ mode = 'personal' }) {
   const handleSelectBranch = (branchName) => {
       if (branchName === activeBranch) return; 
       dispatch(closeAllFiles());
+      dispatch(clearVirtualTree()); 
       dispatch(setActiveBranch(branchName)); 
       setIsBranchOpen(false);
   };
 
   const handleCreateBranch = async () => {
       if (!newBranchName.trim()) return;
+      
+      const confirmMsg = "새 브랜치는 현재 브랜치의 마지막 '커밋(Commit)' 상태를 기준으로 생성됩니다.\n아직 커밋하지 않은 작업 내역이 있다면 먼저 커밋해주세요.\n\n계속해서 브랜치를 생성하시겠습니까?";
+      if (!window.confirm(confirmMsg)) return;
+
       try {
           setIsCreatingBranch(true);
           await createBranchApi(workspaceId, activeProject, newBranchName);
           dispatch(closeAllFiles());
+          dispatch(clearVirtualTree()); 
           dispatch(setActiveBranch(newBranchName));
           setNewBranchName("");
           setIsBranchOpen(false);
@@ -135,6 +140,39 @@ export default function MenuBar({ mode = 'personal' }) {
           alert(error.message);
       } finally {
           setIsCreatingBranch(false);
+      }
+  };
+
+  // =========================================================================
+  // 💡 [NEW] 브랜치 삭제 처리 함수
+  // =========================================================================
+  const handleDeleteBranch = async (e, branchName) => {
+      e.stopPropagation(); // 드롭다운이 닫히는 것을 방지
+
+      if (branchName === 'master') {
+          return alert("master 브랜치는 삭제할 수 없습니다.");
+      }
+
+      if (!window.confirm(`정말 '${branchName}' 브랜치를 삭제하시겠습니까?\n(경고: 복구할 수 없으며 해당 폴더가 영구 삭제됩니다!)`)) {
+          return;
+      }
+
+      try {
+          await deleteBranchApi(workspaceId, activeProject, branchName);
+          
+          // 1. 드롭다운 목록에서 즉시 제거
+          setBranches(prev => prev.filter(b => b !== branchName));
+          alert(`'${branchName}' 브랜치가 성공적으로 삭제되었습니다.`);
+
+          // 2. 만약 삭제한 브랜치가 지금 내가 보고 있는 브랜치라면?
+          if (activeBranch === branchName) {
+              dispatch(closeAllFiles());         // 열려있는 파일 싹 닫기
+              dispatch(clearVirtualTree());      // 가상 뷰 껌딱지 떼기
+              dispatch(setActiveBranch('master')); // 마스터로 강제 피신!
+              setIsBranchOpen(false);
+          }
+      } catch (error) {
+          alert(error.message);
       }
   };
 
@@ -489,7 +527,6 @@ export default function MenuBar({ mode = 'personal' }) {
 
   const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
 
-  // 💡 [NEW] 렌더링에 사용할 실제 이름 추출
   const displayNickname = myProfile?.nickname || user?.nickname || '사용자';
   const displayInitial = displayNickname[0] || '유';
 
@@ -514,7 +551,7 @@ export default function MenuBar({ mode = 'personal' }) {
                     <VscBell size={20} />
                 </div>
              </div>
-             {/* 💡 [FIX] 상단 내 프로필 표시 완벽 적용! */}
+             
              <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
                  <div className="w-7 h-7 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center text-xs text-blue-700 font-bold">
                      {displayInitial}
@@ -593,15 +630,27 @@ export default function MenuBar({ mode = 'personal' }) {
                                   <p className="text-[10px] text-gray-500 truncate">Project: {activeProject}</p>
                               </div>
                               
-                              <div className="max-h-40 overflow-y-auto">
+                              <div className="max-h-40 overflow-y-auto custom-scrollbar">
                                   {branches.map(branch => (
+                                      // 💡 [NEW] 브랜치 목록 렌더링 + 휴지통 아이콘 추가!
                                       <div 
                                           key={branch} 
                                           onClick={() => handleSelectBranch(branch)}
-                                          className={`flex items-center justify-between px-4 py-1.5 cursor-pointer text-xs ${branch === currentBranch ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-700 hover:bg-gray-100'}`}
+                                          className={`flex items-center justify-between px-4 py-2 cursor-pointer text-xs group transition-colors ${branch === currentBranch ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-700 hover:bg-gray-100'}`}
                                       >
-                                          <span>{branch}</span>
-                                          {branch === currentBranch && <span className="text-[10px]">Active</span>}
+                                          <div className="flex items-center gap-2">
+                                              <span>{branch}</span>
+                                              {branch === currentBranch && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded shadow-sm">Active</span>}
+                                          </div>
+                                          {branch !== 'master' && (
+                                              <button 
+                                                  onClick={(e) => handleDeleteBranch(e, branch)}
+                                                  className="text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50"
+                                                  title="브랜치 삭제"
+                                              >
+                                                  <VscTrash size={15} />
+                                              </button>
+                                          )}
                                       </div>
                                   ))}
                               </div>
