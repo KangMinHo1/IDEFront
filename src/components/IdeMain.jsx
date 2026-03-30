@@ -16,9 +16,9 @@ import CommandPalette from './CommandPalette';
 import GitDashboard from './GitDashboard'; 
 import CodeMap from './CodeMap'; 
 
-// 💡 불필요한 가짜 API 삭제하고 원래 있던 2개만 남겼습니다!
+// 💡 [수정됨] closeAllFiles 액션을 불러옵니다!
 import { fetchWorkspaceProjectsApi, fetchVirtualViewsApi } from '../utils/api'; 
-import { setWorkspaceTree, setWorkspaceId, setProjectList, setVirtualTree, clearVirtualTree, setActiveProject, setActiveBranch } from '../store/slices/fileSystemSlice'; 
+import { setWorkspaceTree, setWorkspaceId, setProjectList, setVirtualTree, clearVirtualTree, setActiveProject, setActiveBranch, closeAllFiles } from '../store/slices/fileSystemSlice'; 
 
 const DocsPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">Docs Panel</div>; 
 const ApiTestPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 bg-white font-bold">API Test Panel</div>;
@@ -36,6 +36,9 @@ export default function IdeMain() {
   // =========================================================================
   useEffect(() => {
     if (id) {
+      // 💡 [핵심 추가] 워크스페이스 ID가 새로 들어오면(바뀌면) 무조건 열려있는 탭을 싹 다 닫습니다!
+      dispatch(closeAllFiles());
+      
       dispatch(setWorkspaceId(id));
       fetchWorkspaceProjectsApi(id).then(root => {
         dispatch(setWorkspaceTree(root));

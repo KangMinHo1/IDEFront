@@ -1,3 +1,4 @@
+// src/pages/TeamIdeMain.jsx
 import React, { useEffect, useState, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams } from 'react-router-dom';
@@ -18,7 +19,7 @@ import CodeMap from '../components/CodeMap';
 import { fetchWorkspaceProjectsApi, fetchChatHistoryApi, getUserProfileApi, getWorkspaceMembersApi } from '../utils/api'; 
 import { ChatSocket } from '../utils/chatSocket'; 
 import { useAuth } from '../utils/AuthContext';   
-import { setWorkspaceTree, setWorkspaceId, setProjectList } from '../store/slices/fileSystemSlice'; 
+import { setWorkspaceTree, setWorkspaceId, setProjectList, closeAllFiles } from '../store/slices/fileSystemSlice'; 
 import { VscSend } from 'react-icons/vsc';
 
 const DocsPanel = () => <div className="flex-1 flex items-center justify-center text-gray-500 font-bold">Docs Panel</div>; 
@@ -55,7 +56,6 @@ const CollaborationPanel = ({ workspaceId }) => {
                     sender: msg.senderName,
                     text: msg.content,
                     time: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    // 💡 [수정] 무조건 String으로 감싸서 완벽하게 비교
                     isMe: String(msg.senderId) === String(user.id),
                     type: msg.type
                 }));
@@ -74,7 +74,6 @@ const CollaborationPanel = ({ workspaceId }) => {
                     sender: newMessage.senderName,
                     text: newMessage.content,
                     time: new Date(newMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                    // 💡 [수정] 무조건 String으로 감싸서 완벽하게 비교
                     isMe: String(newMessage.senderId) === String(user.id),
                     type: newMessage.type
                 }];
@@ -84,7 +83,7 @@ const CollaborationPanel = ({ workspaceId }) => {
         return () => {
             ChatSocket.disconnect();
         };
-    }, [workspaceId, user]);
+    }, [workspaceId, user?.id]);
 
     const handleSend = () => {
         if (!chatInput.trim() || !workspaceId || !user) return;
@@ -105,7 +104,6 @@ const CollaborationPanel = ({ workspaceId }) => {
         setChatInput('');
     };
 
-    // 💡 [핵심 수정] 1 === "1" 에러가 발생하지 않도록 모든 ID를 String으로 변환해서 필터링!
     const displayMessages = messages.filter(msg => {
         if (chatMode === 'ALL') {
             return msg.receiverId === null; 
@@ -115,7 +113,6 @@ const CollaborationPanel = ({ workspaceId }) => {
             const mSender = String(msg.senderId);
             const mReceiver = String(msg.receiverId);
             
-            // 내가 보냈거나, 내가 받은 메시지만 통과
             return (mSender === myId && mReceiver === targetId) || 
                    (mSender === targetId && mReceiver === myId);
         }
@@ -186,12 +183,18 @@ export default function TeamIdeMain() {
   const dispatch = useDispatch();
 
   const { activeActivity, isTerminalVisible, isSidebarVisible, isAgentVisible, isDebugMode, codeMapMode } = useSelector(state => state.ui);
-  const { workspaceId, activeProject } = useSelector(state => state.fileSystem);
+  
+  // 💡 [추가] 현재 브랜치 상태 가져오기
+  const { workspaceId, activeProject, activeBranch } = useSelector(state => state.fileSystem);
 
   const [rightTab, setRightTab] = useState('chat');
+  
+  // 💡 [추가] 샌드박스 상태 판별
+  const isSandboxMode = activeBranch?.startsWith('focus/');
 
   useEffect(() => {
     if (id) {
+      dispatch(closeAllFiles()); 
       dispatch(setWorkspaceId(id));
       fetchWorkspaceProjectsApi(id).then(root => {
         dispatch(setWorkspaceTree(root));
@@ -211,7 +214,7 @@ export default function TeamIdeMain() {
               return (
                 <div className="flex-1 flex overflow-hidden">
                     {isSidebarVisible && (
-                        <div className="w-[260px] shrink-0 border-r border-gray-200 flex flex-col bg-[#f8f9fa]">
+                        <div className={`w-[260px] shrink-0 border-r flex flex-col transition-colors duration-700 ${isSandboxMode ? 'bg-slate-900 border-indigo-900/50' : 'bg-[#f8f9fa] border-gray-200'}`}>
                            <Sidebar />
                         </div>
                     )}
@@ -232,21 +235,21 @@ export default function TeamIdeMain() {
                     </div>
 
                     {(isAgentVisible || isDebugMode) && (
-                        <div className="w-[320px] shrink-0 border-l border-gray-200 flex flex-col bg-[#f8f9fa] z-[600]">
+                        <div className={`w-[320px] shrink-0 border-l flex flex-col z-[600] transition-colors duration-700 ${isSandboxMode ? 'bg-slate-900 border-indigo-900/50' : 'bg-[#f8f9fa] border-gray-200'}`}>
                            {isDebugMode ? (
                                <DebugPanel />
                            ) : (
                                <div className="flex flex-col h-full">
-                                   <div className="flex items-center h-10 border-b border-gray-200 bg-[#f8f9fa] shrink-0">
+                                   <div className={`flex items-center h-10 border-b shrink-0 transition-colors duration-700 ${isSandboxMode ? 'bg-slate-900 border-indigo-900/50' : 'bg-[#f8f9fa] border-gray-200'}`}>
                                        <button 
                                            onClick={() => setRightTab('ai')}
-                                           className={`flex-1 h-full text-[12px] font-bold transition-colors ${rightTab === 'ai' ? 'text-blue-600 bg-white border-t-2 border-t-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+                                           className={`flex-1 h-full text-[12px] font-bold transition-colors ${rightTab === 'ai' ? (isSandboxMode ? 'text-indigo-400 bg-white border-t-2 border-t-indigo-500' : 'text-blue-600 bg-white border-t-2 border-t-blue-600') : 'text-gray-500 hover:bg-gray-100'}`}
                                        >
                                            AI 어시스트
                                        </button>
                                        <button 
                                            onClick={() => setRightTab('chat')}
-                                           className={`flex-1 h-full text-[12px] font-bold transition-colors ${rightTab === 'chat' ? 'text-green-600 bg-white border-t-2 border-t-green-600' : 'text-gray-500 hover:bg-gray-100'}`}
+                                           className={`flex-1 h-full text-[12px] font-bold transition-colors ${rightTab === 'chat' ? (isSandboxMode ? 'text-indigo-400 bg-white border-t-2 border-t-indigo-500' : 'text-green-600 bg-white border-t-2 border-t-green-600') : 'text-gray-500 hover:bg-gray-100'}`}
                                        >
                                            팀 채팅
                                        </button>
@@ -269,8 +272,9 @@ export default function TeamIdeMain() {
       }
   };
 
+  // 💡 [배경 변경] 샌드박스 상태일 때 전체 배경을 어두운 톤으로 부드럽게 전환
   return (
-    <div className="h-screen w-screen flex flex-col bg-white text-[#333] overflow-hidden font-sans">
+    <div className={`h-screen w-screen flex flex-col text-[#333] overflow-hidden font-sans transition-colors duration-700 ${isSandboxMode ? 'bg-slate-900' : 'bg-white'}`}>
       <CommandPalette />
       <CreateProjectModal /> 
       <MenuBar mode="team" />

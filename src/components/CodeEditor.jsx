@@ -4,7 +4,6 @@ import React, { useRef, useEffect, useState } from 'react';
 import Editor, { DiffEditor, useMonaco } from '@monaco-editor/react'; 
 import { useDispatch, useSelector } from 'react-redux';
 import { updateFileContent, setAiSuggestion, clearAiSuggestion } from '../store/slices/fileSystemSlice'; 
-// 💡 [수정] getUserProfileApi 임포트 포함!
 import { saveFileApi, fetchAiAssistApi, fetchAiAutocompleteApi, getUserProfileApi } from '../utils/api'; 
 import { writeToTerminal, toggleBreakpoint, triggerEditorCmd, addAgentMessage, setSelectedText } from '../store/slices/uiSlice';
 import { VscCheck, VscClose, VscSparkle, VscLoading } from "react-icons/vsc"; 
@@ -65,7 +64,7 @@ export default function CodeEditor() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const aiInputRef = useRef(null);
 
-  // 💡 [문제 해결의 핵심!] 이게 없어서 하얀 화면이 떴었습니다 ㅠㅠ 닉네임 상태 추가!
+  const [isEditorReady, setIsEditorReady] = useState(false);
   const [fetchedNickname, setFetchedNickname] = useState('');
 
   const { activeFileId, fileContents, workspaceId, activeProject, activeBranch, aiSuggestion } = useSelector(state => state.fileSystem);
@@ -77,25 +76,32 @@ export default function CodeEditor() {
 
   const stateRef = useRef({ activeFileId, workspaceId, activeProject, activeBranch });
 
-  // 💡 [Yjs 전용 참조 객체들]
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
   const bindingRef = useRef(null);
 
-  // 💡 [동시 편집 방 닫기 로직]
+  const isTeamMode = window.location.pathname.includes('/team');
+
   const cleanupCollaboration = () => {
       if (bindingRef.current) { bindingRef.current.destroy(); bindingRef.current = null; }
       if (providerRef.current) { providerRef.current.disconnect(); providerRef.current = null; }
       if (ydocRef.current) { ydocRef.current.destroy(); ydocRef.current = null; }
   };
 
-  // 💡 [동시 편집 방 열기 로직]
   const setupCollaboration = (editor) => {
       cleanupCollaboration();
       if (!activeFileId || !workspaceId || !activeProject) return;
 
       const model = editor.getModel();
       if (!model) return;
+
+      // =========================================================================
+      // 💡 [빈 화면 절대 방지] 화면에 무조건 DB 코드를 먼저 채워 넣습니다!
+      // =========================================================================
+      const initialContent = fileContents[activeFileId] || '';
+      if (model.getValue() !== initialContent) {
+          model.setValue(initialContent);
+      }
 
       const roomName = `${workspaceId}:${activeProject}:${activeBranch || 'master'}:${activeFileId}`;
       
@@ -116,13 +122,11 @@ export default function CodeEditor() {
       const awareness = provider.awareness;
       const myColor = '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
       
-      // 1차: 일단 도착한 닉네임이 있으면 닉네임, 없으면 '익명 개발자'로 이름표를 답니다.
       awareness.setLocalStateField('user', {
           name: fetchedNickname || user?.nickname || '익명 개발자',
           color: myColor
       });
 
-      // 💡 [상대방 커서 색상과 이름을 CSS로 확실하게 박아넣는 로직] (position: absolute 추가 완료!)
       awareness.on('change', () => {
           const styleId = 'yjs-dynamic-cursors';
           let styleEl = document.getElementById(styleId);
@@ -171,30 +175,48 @@ export default function CodeEditor() {
 
       const yText = ydoc.getText('monaco');
 
-      // 💡 빈 화면 씹힘 및 "코드 중복 복사" 방지! (나 혼자일 때만 밀어넣음)
-      provider.on('synced', (isSynced) => {
-          if (isSynced) {
-              const isAlone = provider.awareness.getStates().size <= 1;
-              if (isAlone && yText.toString() === '' && fileContents[activeFileId]) {
-                  yText.insert(0, fileContents[activeFileId]);
-              }
-          }
-      });
+      // =========================================================================
+      // 💡 [안전한 바인딩 함수] 빈 화면 삭제를 막고, 동기화 타이밍을 완벽 통제합니다.
+      // =========================================================================
+      const safeBind = () => {
+          if (bindingRef.current) return; // 이미 바인딩 되었으면 중단
 
-      const binding = new MonacoBinding(
-          yText,
-          model,
-          new Set([editor]),
-          awareness
-      );
-      bindingRef.current = binding;
+          if (yText.length === 0) {
+              // Yjs 서버가 비어있고, 방에 나 혼자라면 내 화면의 코드로 서버를 채움 (중복 방지)
+              if (provider.awareness.getStates().size <= 1) {
+                  yText.insert(0, model.getValue());
+              }
+          } else if (model.getValue() !== yText.toString()) {
+              // 서버에 이미 코드가 존재하면, 내 화면을 서버 코드로 덮어씌움
+              model.setValue(yText.toString());
+          }
+
+          // 서버와 화면의 데이터가 완벽하게 일치하는 이 순간에 바인딩을 묶습니다!
+          bindingRef.current = new MonacoBinding(
+              yText,
+              model,
+              new Set([editor]),
+              awareness
+          );
+      };
+
+      // 접속 즉시 동기화 이벤트 감지
+      if (provider.synced) {
+          safeBind();
+      } else {
+          provider.once('synced', safeBind);
+          provider.once('sync', safeBind); // 호환성을 위해 둘 다 감지
+      }
+
+      // 🚨 [최후의 보루] 네트워크 지연으로 이벤트가 씹혀도 1.5초 뒤엔 무조건 바인딩 실행! (커서 먹통 방지)
+      setTimeout(() => {
+          if (!bindingRef.current) {
+              safeBind();
+          }
+      }, 1500);
+      // =========================================================================
   };
 
-  // =========================================================================
-  // 💡 [익명 개발자 퇴치] API 요청 및 닉네임 덮어쓰기
-  // =========================================================================
-  
-  // 1. 유저 ID가 있으면 서버에 진짜 닉네임을 요청!
   useEffect(() => {
       if (user && user.id) {
           getUserProfileApi(user.id)
@@ -207,7 +229,6 @@ export default function CodeEditor() {
       }
   }, [user]);
 
-  // 2. 닉네임이 도착하면 즉시 스피커(Awareness) 이름을 강제로 갈아 끼웁니다!
   useEffect(() => {
       const finalName = fetchedNickname || user?.nickname;
       if (providerRef.current && providerRef.current.awareness && finalName) {
@@ -220,17 +241,19 @@ export default function CodeEditor() {
           });
       }
   }, [fetchedNickname, user?.nickname]); 
-  // =========================================================================
 
-  // 파일 데이터가 Redux에 들어왔을 때만 에디터 연동 시작!
   const isContentLoaded = fileContents[activeFileId] !== undefined;
 
   useEffect(() => {
-      if (editorRef.current && isContentLoaded) {
-          setupCollaboration(editorRef.current);
+      if (isEditorReady && editorRef.current && isContentLoaded) {
+          if (isTeamMode) {
+              setupCollaboration(editorRef.current);
+          } else {
+              cleanupCollaboration();
+          }
       }
       return () => cleanupCollaboration();
-  }, [activeFileId, workspaceId, activeProject, activeBranch, isContentLoaded]);
+  }, [isEditorReady, activeFileId, workspaceId, activeProject, activeBranch, isContentLoaded, isTeamMode]);
 
   useEffect(() => {
       stateRef.current = { activeFileId, workspaceId, activeProject, activeBranch };
@@ -293,8 +316,20 @@ export default function CodeEditor() {
       executeAiAction(aiQuery + "\n\n(명령어: explanation 필드의 설명은 반드시 핵심만 1~2줄로 아주 짧고 간결하게 작성해.)", fileContents[activeFileId] || '');
   };
 
+  // 💡 [AI 수락 동기화] 에디터 화면에 무조건 붙여넣기로 명령 하달
   const handleAcceptAi = () => {
-      if (aiSuggestion.targetPath && aiSuggestion.suggestedCode) {
+      if (aiSuggestion.targetPath && aiSuggestion.suggestedCode && editorRef.current) {
+          const model = editorRef.current.getModel();
+          if (model) {
+              model.pushEditOperations(
+                  [],
+                  [{
+                      range: model.getFullModelRange(),
+                      text: aiSuggestion.suggestedCode
+                  }],
+                  () => null
+              );
+          }
           dispatch(updateFileContent({ filePath: aiSuggestion.targetPath, content: aiSuggestion.suggestedCode }));
       }
       dispatch(clearAiSuggestion());
@@ -304,8 +339,7 @@ export default function CodeEditor() {
 
   const handleEditorDidMount = (editor, monacoInstance) => {
     editorRef.current = editor;
-
-    if (isContentLoaded) setupCollaboration(editor);
+    setIsEditorReady(true);
 
     editor.onDidChangeCursorSelection((e) => {
         const selection = e.selection;
@@ -470,6 +504,35 @@ export default function CodeEditor() {
               .conflict-current-margin { border-left: 4px solid #3cb371 !important; }
               .conflict-incoming-bg { background-color: rgba(65, 105, 225, 0.2) !important; }
               .conflict-incoming-margin { border-left: 4px solid #4169e1 !important; }
+
+              /* 기본 뼈대: 얇은 커서와 꼬리표 */
+              .yRemoteSelection {
+                  background-color: rgba(250, 129, 0, 0.2) !important;
+              }
+              .yRemoteSelectionHead {
+                  position: absolute !important;
+                  border-left: 2px solid orange !important;
+                  box-sizing: border-box !important;
+                  height: 100% !important;
+                  z-index: 99 !important;
+                  display: inline-block !important;
+              }
+              .yRemoteSelectionHead::after {
+                  position: absolute !important;
+                  content: ' ' !important;
+                  top: -20px !important;
+                  left: -2px !important;
+                  background-color: orange !important;
+                  color: white !important;
+                  font-size: 11px !important;
+                  font-weight: bold !important;
+                  padding: 2px 6px !important;
+                  border-radius: 4px !important;
+                  border-bottom-left-radius: 0 !important;
+                  white-space: nowrap !important;
+                  z-index: 100 !important;
+                  pointer-events: none !important;
+              }
           `;
           document.head.appendChild(style);
       }
@@ -648,8 +711,8 @@ export default function CodeEditor() {
         )}
 
         <div className="flex-1 relative">
-            {isDiffMode ? (
-                <div className="absolute inset-0 z-10 bg-white">
+            {isDiffMode && (
+                <div className="absolute inset-0 z-20 bg-white">
                     <DiffEditor
                         height="100%"
                         theme="light"
@@ -666,40 +729,40 @@ export default function CodeEditor() {
                         }}
                     />
                 </div>
-            ) : (
-                <div className="absolute inset-0 z-10 bg-white">
-                    <Editor
-                        height="100%"
-                        theme="light" 
-                        path={activeFileId}
-                        language={getLanguage(activeFileId)}
-                        value={fileContents[activeFileId] || ''}
-                        onChange={handleEditorChange}
-                        onMount={handleEditorDidMount}
-                        options={{
-                            fontSize: fontSize,
-                            fontFamily: "'D2Coding', 'Consolas', monospace",
-                            minimap: { enabled: editorSettings.minimap },
-                            scrollBeyondLastLine: false,
-                            automaticLayout: true,
-                            glyphMargin: true,
-                            renderLineHighlight: "all",
-                            lineNumbersMinChars: 4,
-                            padding: { top: 10 },
-                            quickSuggestions: editorSettings.autoComplete,
-                            suggestOnTriggerCharacters: editorSettings.autoComplete,
-                            snippetSuggestions: editorSettings.autoComplete ? "inline" : "none",
-                            wordBasedSuggestions: editorSettings.autoComplete,
-                            formatOnType: editorSettings.formatOnType,
-                            formatOnPaste: editorSettings.formatOnType,
-                            links: true,
-                            matchBrackets: "always",
-                            autoClosingBrackets: "always",
-                            inlineSuggest: { enabled: true } 
-                        }}
-                    />
-                </div>
             )}
+            
+            <div className={`absolute inset-0 z-10 bg-white ${isDiffMode ? 'invisible' : ''}`}>
+                <Editor
+                    height="100%"
+                    theme="light" 
+                    path={activeFileId}
+                    language={getLanguage(activeFileId)}
+                    value={fileContents[activeFileId] || ''}
+                    onChange={handleEditorChange}
+                    onMount={handleEditorDidMount}
+                    options={{
+                        fontSize: fontSize,
+                        fontFamily: "'D2Coding', 'Consolas', monospace",
+                        minimap: { enabled: editorSettings.minimap },
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        glyphMargin: true,
+                        renderLineHighlight: "all",
+                        lineNumbersMinChars: 4,
+                        padding: { top: 10 },
+                        quickSuggestions: editorSettings.autoComplete,
+                        suggestOnTriggerCharacters: editorSettings.autoComplete,
+                        snippetSuggestions: editorSettings.autoComplete ? "inline" : "none",
+                        wordBasedSuggestions: editorSettings.autoComplete,
+                        formatOnType: editorSettings.formatOnType,
+                        formatOnPaste: editorSettings.formatOnType,
+                        links: true,
+                        matchBrackets: "always",
+                        autoClosingBrackets: "always",
+                        inlineSuggest: { enabled: true } 
+                    }}
+                />
+            </div>
         </div>
     </div>
   );

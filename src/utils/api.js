@@ -469,3 +469,30 @@ export const deleteBranchApi = async (workspaceId, projectName, branchName) => {
     }
     return await response.text();
 };
+
+// src/utils/api.js 의 맨 아래에 추가해 주세요!
+
+export const createSandboxApi = async (workspaceId, projectName, nickname, taskName) => {
+    const response = await fetch('http://localhost:8080/api/git/sandbox/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, projectName, nickname, taskName })
+    });
+    if (!response.ok) {
+        throw new Error(await response.text() || "샌드박스 생성에 실패했습니다.");
+    }
+    return await response.text(); // 생성된 브랜치 이름 반환
+};
+
+// src/utils/api.js 하단의 applySandboxApi 수정
+export const applySandboxApi = async (workspaceId, projectName, sandboxBranch, commitMessage, nickname) => {
+    const response = await fetch('http://localhost:8080/api/git/sandbox/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, projectName, sandboxBranch, commitMessage, nickname })
+    });
+    if (!response.ok) {
+        throw new Error(await response.text() || "샌드박스 병합에 실패했습니다.");
+    }
+    return await response.text(); 
+};

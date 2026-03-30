@@ -1,4 +1,4 @@
-// 경로: src/components/MenuBar.jsx
+// src/components/MenuBar.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -8,10 +8,10 @@ import { DebugSocket } from '../utils/debugSocket';
 import { RunSocket } from '../utils/runSocket'; 
 import { 
     VscBell, VscSourceControl, VscChevronDown, VscAdd, VscRefresh, 
-    VscClose, VscOrganization, VscMic, VscAccount, VscMail, VscCopy, VscCheck, VscMute, VscKey, VscTrash // 💡 [수정] VscTrash 추가
+    VscClose, VscOrganization, VscMic, VscAccount, VscMail, VscCopy, VscCheck, VscMute, VscKey, VscTrash,
+    VscLock, VscRocket, VscSparkle, VscBeaker
 } from "react-icons/vsc";
-// 💡 [수정] deleteBranchApi 추가 임포트
-import { fetchBranchListApi, createBranchApi, saveFileApi, getWorkspaceMembersApi, inviteWorkspaceMemberApi, getUserProfileApi, deleteBranchApi } from '../utils/api'; 
+import { fetchBranchListApi, createBranchApi, saveFileApi, getWorkspaceMembersApi, inviteWorkspaceMemberApi, getUserProfileApi, deleteBranchApi, createSandboxApi, applySandboxApi } from '../utils/api'; 
 import { useAuth } from '../utils/AuthContext'; 
 
 const getLanguageFromPath = (path) => {
@@ -60,11 +60,23 @@ export default function MenuBar({ mode = 'personal' }) {
   
   const [teamMembers, setTeamMembers] = useState([]);
 
+  const [fullScreenLoading, setFullScreenLoading] = useState({ isOpen: false, text: '' });
+  const [isSandboxCreateModalOpen, setIsSandboxCreateModalOpen] = useState(false);
+  const [sandboxTaskName, setSandboxTaskName] = useState("");
+  const [isSandboxApplyModalOpen, setIsSandboxApplyModalOpen] = useState(false);
+  
+  const [mergeCommitMessage, setMergeCommitMessage] = useState("");
+
   const menuRef = useRef(null);
   const notiRef = useRef(null);
   const branchRef = useRef(null);
 
   const isRelocationPage = location.pathname.includes('/relocation') || location.pathname.includes('/rearrange');
+  
+  const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
+  const isSandboxMode = currentBranch.startsWith('focus-'); 
+
+  const currentNickname = myProfile?.nickname || user?.nickname || 'dev';
 
   useEffect(() => {
       if (user && user.id) {
@@ -87,9 +99,8 @@ export default function MenuBar({ mode = 'personal' }) {
   useEffect(() => {
       const handleEsc = (e) => {
           if (e.key === 'Escape') {
-              setIsTeamModalOpen(false);
-              setIsVoiceChatModalOpen(false);
-              setIsInviteModalOpen(false);
+              setIsTeamModalOpen(false); setIsVoiceChatModalOpen(false); setIsInviteModalOpen(false);
+              setIsSandboxCreateModalOpen(false); setIsSandboxApplyModalOpen(false);
           }
       };
       window.addEventListener('keydown', handleEsc);
@@ -104,7 +115,7 @@ export default function MenuBar({ mode = 'personal' }) {
       } else {
           setBranches([]);
       }
-  }, [workspaceId, activeProject, isBranchOpen]);
+  }, [workspaceId, activeProject, isBranchOpen, currentBranch]);
 
   useEffect(() => {
       if (mode === 'team' && workspaceId) {
@@ -124,10 +135,6 @@ export default function MenuBar({ mode = 'personal' }) {
 
   const handleCreateBranch = async () => {
       if (!newBranchName.trim()) return;
-      
-      const confirmMsg = "새 브랜치는 현재 브랜치의 마지막 '커밋(Commit)' 상태를 기준으로 생성됩니다.\n아직 커밋하지 않은 작업 내역이 있다면 먼저 커밋해주세요.\n\n계속해서 브랜치를 생성하시겠습니까?";
-      if (!window.confirm(confirmMsg)) return;
-
       try {
           setIsCreatingBranch(true);
           await createBranchApi(workspaceId, activeProject, newBranchName);
@@ -143,36 +150,79 @@ export default function MenuBar({ mode = 'personal' }) {
       }
   };
 
-  // =========================================================================
-  // 💡 [NEW] 브랜치 삭제 처리 함수
-  // =========================================================================
   const handleDeleteBranch = async (e, branchName) => {
-      e.stopPropagation(); // 드롭다운이 닫히는 것을 방지
-
-      if (branchName === 'master') {
-          return alert("master 브랜치는 삭제할 수 없습니다.");
-      }
-
-      if (!window.confirm(`정말 '${branchName}' 브랜치를 삭제하시겠습니까?\n(경고: 복구할 수 없으며 해당 폴더가 영구 삭제됩니다!)`)) {
-          return;
-      }
+      e.stopPropagation();
+      if (branchName === 'master') return alert("master 브랜치는 삭제할 수 없습니다.");
+      if (!window.confirm(`정말 '${branchName}' 브랜치를 삭제하시겠습니까?`)) return;
 
       try {
           await deleteBranchApi(workspaceId, activeProject, branchName);
-          
-          // 1. 드롭다운 목록에서 즉시 제거
           setBranches(prev => prev.filter(b => b !== branchName));
-          alert(`'${branchName}' 브랜치가 성공적으로 삭제되었습니다.`);
-
-          // 2. 만약 삭제한 브랜치가 지금 내가 보고 있는 브랜치라면?
           if (activeBranch === branchName) {
-              dispatch(closeAllFiles());         // 열려있는 파일 싹 닫기
-              dispatch(clearVirtualTree());      // 가상 뷰 껌딱지 떼기
-              dispatch(setActiveBranch('master')); // 마스터로 강제 피신!
+              dispatch(closeAllFiles());         
+              dispatch(clearVirtualTree());      
+              dispatch(setActiveBranch('master')); 
               setIsBranchOpen(false);
           }
+      } catch (error) { alert(error.message); }
+  };
+
+  const executeCreateSandbox = async () => {
+      if (!sandboxTaskName.trim()) return alert("작업명을 입력해주세요.");
+      
+      setIsSandboxCreateModalOpen(false);
+      setFullScreenLoading({ isOpen: true, text: '격리된 샌드박스 환경을 구축하는 중입니다...' });
+
+      try {
+          const sandboxBranchName = await createSandboxApi(workspaceId, activeProject, currentNickname, sandboxTaskName);
+
+          dispatch(closeAllFiles());
+          dispatch(clearVirtualTree());
+          dispatch(setActiveBranch(sandboxBranchName));
+          setSandboxTaskName("");
       } catch (error) {
           alert(error.message);
+      } finally {
+          setTimeout(() => setFullScreenLoading({ isOpen: false, text: '' }), 500); 
+      }
+  };
+
+  // 💡 [핵심 연동 업데이트] 자동저장 (Promise.all) + UI 갱신 안내 알림 추가
+  const executeApplySandbox = async () => {
+      if (!mergeCommitMessage.trim()) return alert("병합 전 남길 커밋 메시지를 입력해주세요!");
+
+      setIsSandboxApplyModalOpen(false);
+      setFullScreenLoading({ isOpen: true, text: '작업 내용을 저장하고 메인으로 합치는 중...' });
+
+      try {
+          // 1. 현재 에디터에 열린 '모든' 파일 내용 강제 저장 (디스크 완벽 반영)
+          if (fileContents && Object.keys(fileContents).length > 0) {
+              const savePromises = Object.entries(fileContents).map(([path, content]) => 
+                  saveFileApi(workspaceId, activeProject, activeBranch, path, content)
+              );
+              await Promise.all(savePromises);
+          }
+
+          // 2. 샌드박스 병합 API 호출 시 유저의 커밋 메시지와 닉네임 함께 전송
+          await applySandboxApi(workspaceId, activeProject, activeBranch, mergeCommitMessage, currentNickname);
+          
+          // 3. 완료 후 마스터 방으로 복귀
+          dispatch(closeAllFiles());
+          dispatch(setActiveBranch('master'));
+
+          // 4. [새로고침 알림] 사용자가 보던 파일이 있었다면 탐색기 재클릭 유도
+          if (activeFileId) {
+              alert("🚀 master 브랜치로 병합이 완료되었습니다!\n최신 변경된 코드를 화면에 표시하려면 좌측 탐색기에서 파일을 다시 클릭해 주세요.");
+          } else {
+              alert("🚀 성공적으로 메인(master) 코드에 반영되었습니다!");
+          }
+
+          dispatch(clearVirtualTree());
+          setMergeCommitMessage("");
+      } catch (error) {
+          alert("⚠️ 병합 실패: \n" + error.message);
+      } finally {
+          setTimeout(() => setFullScreenLoading({ isOpen: false, text: '' }), 500);
       }
   };
 
@@ -275,57 +325,33 @@ export default function MenuBar({ mode = 'personal' }) {
           case '줄로 이동...': dispatch(triggerEditorCmd('go_to_line')); break;
 
           case '디버깅 시작':
-              if (!activeFileId || !workspaceId || !activeProject) {
-                  alert("디버깅할 파일을 에디터에 열어주세요!");
-                  return;
-              }
+              if (!activeFileId || !workspaceId || !activeProject) return alert("디버깅할 파일을 에디터에 열어주세요!");
               if (!isTerminalVisible) dispatch(toggleTerminal());
-              dispatch(setDebugMode(true));
-              dispatch(setActiveBottomTab('output'));
-
+              dispatch(setDebugMode(true)); dispatch(setActiveBottomTab('output'));
               try {
                   const content = fileContents[activeFileId] || '';
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   dispatch(writeToTerminal(`\r\n[System] 코드를 자동 저장했습니다: ${activeFileId}\r\n`));
-              } catch (error) {
-                  dispatch(writeToTerminal(`\r\n[Error] 실행 전 자동 저장에 실패했습니다: ${error.message}\r\n`));
-                  return; 
-              }
-
+              } catch (error) { return dispatch(writeToTerminal(`\r\n[Error] 실행 전 자동 저장에 실패했습니다: ${error.message}\r\n`)); }
               dispatch(writeToTerminal('[System] 백엔드 디버거와 연결을 시도합니다...\n'));
               if (DebugSocket) {
-                  const currentFileBreakpoints = breakpoints
-                      .filter(bp => bp.path === activeFileId)
-                      .map(bp => ({ line: bp.line }));
+                  const currentFileBreakpoints = breakpoints.filter(bp => bp.path === activeFileId).map(bp => ({ line: bp.line }));
                   DebugSocket.startDebug(workspaceId, activeProject, activeBranch || 'master', activeFileId, currentFileBreakpoints);
               }
               break;
 
           case '디버깅 없이 실행':
-              if (!activeFileId || !workspaceId || !activeProject) {
-                  alert("실행할 파일을 에디터에 열어주세요!");
-                  return;
-              }
+              if (!activeFileId || !workspaceId || !activeProject) return alert("실행할 파일을 에디터에 열어주세요!");
               if (!isTerminalVisible) dispatch(toggleTerminal());
               dispatch(setActiveBottomTab('output'));
-              
               try {
                   const content = fileContents[activeFileId] || '';
                   await saveFileApi(workspaceId, activeProject, activeBranch || 'master', activeFileId, content);
                   dispatch(writeToTerminal(`\r\n[System] 코드를 자동 저장했습니다: ${activeFileId}\r\n`));
-              } catch (error) {
-                  dispatch(writeToTerminal(`\r\n[Error] 실행 전 자동 저장에 실패했습니다: ${error.message}\r\n`));
-                  return; 
-              }
-
+              } catch (error) { return dispatch(writeToTerminal(`\r\n[Error] 실행 전 자동 저장에 실패했습니다: ${error.message}\r\n`)); }
               const language = getLanguageFromPath(activeFileId);
               dispatch(writeToTerminal(`[System] ${language} 환경에서 ${activeFileId} 실행을 준비합니다...\r\n`));
-
-              const runPayload = {
-                  type: 'RUN', workspaceId: workspaceId, projectName: activeProject,
-                  branchName: activeBranch || 'master', filePath: activeFileId, language: language
-              };
-
+              const runPayload = { type: 'RUN', workspaceId, projectName: activeProject, branchName: activeBranch || 'master', filePath: activeFileId, language };
               RunSocket.connectAndRun(
                   'ws://localhost:8080/ws/run', runPayload,
                   (msg) => dispatch(writeToTerminal(msg)),
@@ -341,41 +367,22 @@ export default function MenuBar({ mode = 'personal' }) {
               if (!isTerminalVisible) dispatch(toggleTerminal());
               dispatch(writeToTerminal('[System] 실행/디버깅을 중지합니다.\n'));
               break;
-          case '한 단계씩 코드 실행':
-              if (DebugSocket && typeof DebugSocket.stepOver === 'function') DebugSocket.stepOver();
-              break;
-          case '프로시저 단위 실행':
-              if (DebugSocket && typeof DebugSocket.stepInto === 'function') DebugSocket.stepInto();
-              break;
-          case '중단점 설정/해제': 
-              dispatch(triggerEditorCmd('toggle_breakpoint')); 
-              break;
+          case '한 단계씩 코드 실행': if (DebugSocket && typeof DebugSocket.stepOver === 'function') DebugSocket.stepOver(); break;
+          case '프로시저 단위 실행': if (DebugSocket && typeof DebugSocket.stepInto === 'function') DebugSocket.stepInto(); break;
+          case '중단점 설정/해제': dispatch(triggerEditorCmd('toggle_breakpoint')); break;
 
           case '프로젝트 빌드':
           case '다시 빌드':
-              if (!workspaceId || !activeProject) {
-                  alert("빌드할 프로젝트를 탐색기에서 선택해주세요!");
-                  return;
-              }
+              if (!workspaceId || !activeProject) return alert("빌드할 프로젝트를 탐색기에서 선택해주세요!");
               if (!isTerminalVisible) dispatch(toggleTerminal());
-              dispatch(setActiveBottomTab('output')); 
-              dispatch(writeToTerminal(`\r\n[System] 🔨 ${activeProject} 프로젝트 빌드를 시작합니다...\r\n`));
-
+              dispatch(setActiveBottomTab('output')); dispatch(writeToTerminal(`\r\n[System] 🔨 ${activeProject} 프로젝트 빌드를 시작합니다...\r\n`));
               fetch(`http://localhost:8080/api/workspaces/build`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ workspaceId: workspaceId, projectName: activeProject, branchName: activeBranch || 'master' })
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ workspaceId, projectName: activeProject, branchName: activeBranch || 'master' })
               })
               .then(async (res) => {
-                  if (!res.ok) {
-                      const text = await res.text();
-                      throw new Error(text || "서버에서 빌드 중 에러가 발생했습니다.");
-                  }
-                  const lang = getLanguageFromPath(activeFileId);
-                  let defaultExtension = '';
-                  if (lang === 'JAVA') defaultExtension = '.jar';
-                  else if (lang === 'C' || lang === 'CPP') defaultExtension = '.exe'; 
-                  
+                  if (!res.ok) throw new Error(await res.text() || "서버에서 빌드 중 에러가 발생했습니다.");
+                  let defaultExtension = getLanguageFromPath(activeFileId) === 'JAVA' ? '.jar' : (getLanguageFromPath(activeFileId) === 'C' || getLanguageFromPath(activeFileId) === 'CPP' ? '.exe' : '');
                   let filename = `${activeProject}_build_result${defaultExtension}`;
                   const disposition = res.headers.get('Content-Disposition');
                   if (disposition && disposition.includes('filename=')) {
@@ -385,63 +392,33 @@ export default function MenuBar({ mode = 'personal' }) {
                           try { filename = decodeURIComponent(filename); } catch(e) {}
                       }
                   }
-                  const blob = await res.blob();
-                  return { blob, filename };
+                  return { blob: await res.blob(), filename };
               })
               .then(({ blob, filename }) => {
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url; a.download = filename; 
-                  document.body.appendChild(a); a.click(); a.remove();
-                  window.URL.revokeObjectURL(url);
+                  const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; 
+                  document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
                   dispatch(writeToTerminal(`[System] ✅ 빌드 성공! 파일(${filename})이 정상적으로 다운로드되었습니다.\r\n`));
               })
-              .catch(err => {
-                  dispatch(writeToTerminal(`[Error] ❌ 빌드 실패: ${err.message}\r\n`));
-              });
+              .catch(err => dispatch(writeToTerminal(`[Error] ❌ 빌드 실패: ${err.message}\r\n`)));
               break;
 
           case '빌드 취소':
-              if (!isTerminalVisible) dispatch(toggleTerminal());
-              dispatch(writeToTerminal('[System] 빌드를 취소했습니다.\n'));
-              break;
-
+              if (!isTerminalVisible) dispatch(toggleTerminal()); dispatch(writeToTerminal('[System] 빌드를 취소했습니다.\n')); break;
           case '전체 화면':
-              dispatch(setCodeMapMode('full'));       
-              if(typeof openCodeMapTab === 'function') dispatch(openCodeMapTab('full'));       
-              break;
+              dispatch(setCodeMapMode('full')); if(typeof openCodeMapTab === 'function') dispatch(openCodeMapTab('full')); break;
           case '분할 화면':
-              dispatch(setCodeMapMode('split'));      
-              if(typeof openCodeMapTab === 'function') dispatch(openCodeMapTab('split'));      
-              break;
-
-          case '정보':
-          case '문서':
-          case '키보드 단축키':
-          case 'Commit & Merge':
-          case 'Repository Settings':
-              if (!isTerminalVisible) dispatch(toggleTerminal());
-              dispatch(writeToTerminal(`[System] ${itemName} 기능 준비 중입니다.\n`));
-              break;
-              
-          default:
-              console.log(`${menuName} - ${itemName} 기능이 스위치 문에 없습니다.`);
-              break;
+              dispatch(setCodeMapMode('split')); if(typeof openCodeMapTab === 'function') dispatch(openCodeMapTab('split')); break;
+          case '정보': case '문서': case '키보드 단축키': case 'Commit & Merge': case 'Repository Settings':
+              if (!isTerminalVisible) dispatch(toggleTerminal()); dispatch(writeToTerminal(`[System] ${itemName} 기능 준비 중입니다.\n`)); break;
+          default: break;
       }
   };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        handleMenuItemClick(null, '저장');
-      } else if (e.ctrlKey && e.shiftKey && (e.key === '`' || e.key === '~')) {
-        e.preventDefault();
-        handleMenuItemClick(null, '새 터미널');
-      } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'e') {
-        e.preventDefault();
-        handleMenuItemClick(null, '탐색기');
-      }
+      if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); handleMenuItemClick(null, '저장'); } 
+      else if (e.ctrlKey && e.shiftKey && (e.key === '`' || e.key === '~')) { e.preventDefault(); handleMenuItemClick(null, '새 터미널'); } 
+      else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'e') { e.preventDefault(); handleMenuItemClick(null, '탐색기'); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -457,103 +434,61 @@ export default function MenuBar({ mode = 'personal' }) {
   ];
   
   const subMenus = [
-    { name: '파일', items: [
-        { label: '새 파일', shortcut: 'Ctrl+N' }, 
-        { label: '파일 열기...', shortcut: 'Ctrl+O' }, 
-        { label: '폴더 열기...', shortcut: 'Ctrl+Shift+O' }, 
-        { label: '저장', shortcut: 'Ctrl+S' }, 
-        { label: '다른 이름으로...', shortcut: 'Ctrl+Shift+S' }, 
-        { label: '모두 저장', shortcut: 'Ctrl+K S' }, 
-        { label: '내보내기' }, 
-        { label: '닫기', shortcut: 'Ctrl+W' }
-    ]},
-    { name: '편집', items: [
-        { label: '실행 취소', shortcut: 'Ctrl+Z' }, 
-        { label: '다시 실행', shortcut: 'Ctrl+Y' }, 
-        { label: '잘라내기', shortcut: 'Ctrl+X' }, 
-        { label: '복사', shortcut: 'Ctrl+C' }, 
-        { label: '붙여넣기', shortcut: 'Ctrl+V' }, 
-        { label: '찾기', shortcut: 'Ctrl+F' }, 
-        { label: '바꾸기', shortcut: 'Ctrl+H' }
-    ]},
-    { name: '보기', items: [
-        { label: '탐색기', shortcut: 'Ctrl+Shift+E' }, 
-        { label: '검색', shortcut: 'Ctrl+Shift+F' }, 
-        { label: '소스 제어', shortcut: 'Ctrl+Shift+G' }, 
-        { label: '실행 및 디버그', shortcut: 'Ctrl+Shift+D' }, 
-        { label: '확장', shortcut: 'Ctrl+Shift+X' }, 
-        { label: '출력', shortcut: 'Ctrl+Shift+U' }, 
-        { label: '디버그 콘솔', shortcut: 'Ctrl+Shift+Y' }, 
-        { label: '터미널', shortcut: 'Ctrl+`' }, 
-        { label: '확대', shortcut: 'Ctrl+=' }, 
-        { label: '축소', shortcut: 'Ctrl+-' }
-    ]},
-    { name: '이동', items: [
-        { label: '정의로 이동', shortcut: 'F12' }, 
-        { label: '참조로 이동', shortcut: 'Shift+F12' }, 
-        { label: '줄로 이동...', shortcut: 'Ctrl+G' }
-    ]},
-    { name: '디버그', items: [
-        { label: '디버깅 시작', shortcut: 'F5' }, 
-        { label: '디버깅 없이 실행', shortcut: 'Ctrl+F5' }, 
-        { label: '디버깅 중지', shortcut: 'Shift+F5' }, 
-        { label: '중단점 설정/해제', shortcut: 'F9' }, 
-        { label: '한 단계씩 코드 실행', shortcut: 'F10' }, 
-        { label: '프로시저 단위 실행', shortcut: 'F11' }
-    ]},
-    { name: '빌드', items: [
-        { label: '프로젝트 빌드', shortcut: 'Ctrl+Shift+B' }, 
-        { label: '다시 빌드' }, 
-        { label: '빌드 취소' }
-    ]},
-    { name: '터미널', items: [
-        { label: '새 터미널', shortcut: 'Ctrl+Shift+`' }, 
-        { label: '터미널 분할', shortcut: 'Ctrl+Shift+5' }
-    ]},
-    { name: '도움말', items: [
-        { label: '정보' }, 
-        { label: '문서' }, 
-        { label: '키보드 단축키', shortcut: 'Ctrl+K Ctrl+S' }
-    ]},
-    { name: '코드맵', items: [
-        { label: '전체 화면' }, 
-        { label: '분할 화면' }
-    ]},
-    { name: 'Git', items: [
-        { label: 'Commit & Merge' }, 
-        { label: 'Repository Settings' }
-    ]}
+    { name: '파일', items: [{ label: '새 파일', shortcut: 'Ctrl+N' }, { label: '파일 열기...', shortcut: 'Ctrl+O' }, { label: '폴더 열기...', shortcut: 'Ctrl+Shift+O' }, { label: '저장', shortcut: 'Ctrl+S' }, { label: '다른 이름으로...', shortcut: 'Ctrl+Shift+S' }, { label: '모두 저장', shortcut: 'Ctrl+K S' }, { label: '내보내기' }, { label: '닫기', shortcut: 'Ctrl+W' }]},
+    { name: '편집', items: [{ label: '실행 취소', shortcut: 'Ctrl+Z' }, { label: '다시 실행', shortcut: 'Ctrl+Y' }, { label: '잘라내기', shortcut: 'Ctrl+X' }, { label: '복사', shortcut: 'Ctrl+C' }, { label: '붙여넣기', shortcut: 'Ctrl+V' }, { label: '찾기', shortcut: 'Ctrl+F' }, { label: '바꾸기', shortcut: 'Ctrl+H' }]},
+    { name: '보기', items: [{ label: '탐색기', shortcut: 'Ctrl+Shift+E' }, { label: '검색', shortcut: 'Ctrl+Shift+F' }, { label: '소스 제어', shortcut: 'Ctrl+Shift+G' }, { label: '실행 및 디버그', shortcut: 'Ctrl+Shift+D' }, { label: '확장', shortcut: 'Ctrl+Shift+X' }, { label: '출력', shortcut: 'Ctrl+Shift+U' }, { label: '디버그 콘솔', shortcut: 'Ctrl+Shift+Y' }, { label: '터미널', shortcut: 'Ctrl+`' }, { label: '확대', shortcut: 'Ctrl+=' }, { label: '축소', shortcut: 'Ctrl+-' }]},
+    { name: '이동', items: [{ label: '정의로 이동', shortcut: 'F12' }, { label: '참조로 이동', shortcut: 'Shift+F12' }, { label: '줄로 이동...', shortcut: 'Ctrl+G' }]},
+    { name: '디버그', items: [{ label: '디버깅 시작', shortcut: 'F5' }, { label: '디버깅 없이 실행', shortcut: 'Ctrl+F5' }, { label: '디버깅 중지', shortcut: 'Shift+F5' }, { label: '중단점 설정/해제', shortcut: 'F9' }, { label: '한 단계씩 코드 실행', shortcut: 'F10' }, { label: '프로시저 단위 실행', shortcut: 'F11' }]},
+    { name: '빌드', items: [{ label: '프로젝트 빌드', shortcut: 'Ctrl+Shift+B' }, { label: '다시 빌드' }, { label: '빌드 취소' }]},
+    { name: '터미널', items: [{ label: '새 터미널', shortcut: 'Ctrl+Shift+`' }, { label: '터미널 분할', shortcut: 'Ctrl+Shift+5' }]},
+    { name: '도움말', items: [{ label: '정보' }, { label: '문서' }, { label: '키보드 단축키', shortcut: 'Ctrl+K Ctrl+S' }]},
+    { name: '코드맵', items: [{ label: '전체 화면' }, { label: '분할 화면' }]},
+    { name: 'Git', items: [{ label: 'Commit & Merge' }, { label: 'Repository Settings' }]}
   ];
-
-  const currentBranch = activeProject ? (activeBranch || 'master') : 'No Project';
 
   const displayNickname = myProfile?.nickname || user?.nickname || '사용자';
   const displayInitial = displayNickname[0] || '유';
 
+  const visibleBranches = branches.filter(branch => {
+      if (branch.startsWith('focus-')) {
+          return branch.startsWith(`focus-${currentNickname}-`);
+      }
+      return true; 
+  });
+
   return (
     <>
-      <div className="flex flex-col w-full border-b border-gray-200 bg-white shrink-0 z-[1000] relative">
+      <div className={`flex flex-col w-full border-b shrink-0 z-[1000] relative transition-colors duration-700 ${isSandboxMode ? 'border-indigo-800/50 shadow-[0_4px_30px_-4px_rgba(79,70,229,0.3)]' : 'border-gray-200 bg-white'}`}>
         
-        <div className="flex items-center justify-between px-6 h-12 relative border-b border-gray-100">
-          <div className="font-extrabold text-xl tracking-tight text-gray-900 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => navigate('/')}>VSIDE</div>
+        <div className={`flex items-center justify-between px-6 h-12 relative border-b transition-all duration-700 ${isSandboxMode ? 'bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border-indigo-800/80' : 'border-gray-100 bg-white'}`}>
+          <div className="flex items-center gap-4">
+              <div className={`font-extrabold text-xl tracking-tight cursor-pointer transition-colors ${isSandboxMode ? 'text-indigo-400 hover:text-indigo-300 drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]' : 'text-gray-900 hover:text-blue-600'}`} onClick={() => navigate('/')}>VSIDE</div>
+              
+              {isSandboxMode && (
+                  <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/20 border border-indigo-500/40 rounded-full animate-fade-in">
+                      <VscSparkle className="text-indigo-400 animate-pulse" size={14} />
+                      <span className="text-[10px] font-black text-indigo-300 tracking-wider">포커스 샌드박 가동 중</span>
+                  </div>
+              )}
+          </div>
           
-          <div className="flex items-center gap-8 text-[13px] font-bold text-gray-500">
+          <div className={`flex items-center gap-8 text-[13px] font-bold ${isSandboxMode ? 'text-indigo-200/70' : 'text-gray-500'}`}>
               {gnbMenus.map(menu => (
-                  <span key={menu.label} className="cursor-pointer hover:text-gray-900 transition-colors" onClick={menu.action}>
+                  <span key={menu.label} className={`cursor-pointer transition-colors ${isSandboxMode ? 'hover:text-indigo-100' : 'hover:text-gray-900'}`} onClick={menu.action}>
                       {menu.label}
                   </span>
               ))}
           </div>
 
-          <div className="flex items-center gap-5 text-[13px] font-semibold text-gray-800">
+          <div className={`flex items-center gap-5 text-[13px] font-semibold ${isSandboxMode ? 'text-indigo-100' : 'text-gray-800'}`}>
              <div className="relative" ref={notiRef}>
-                <div className={`relative cursor-pointer transition-colors p-1.5 rounded-md ${isNotiOpen ? 'bg-gray-100 text-blue-600' : 'text-gray-500 hover:text-blue-600 hover:bg-gray-50'}`} onClick={() => setIsNotiOpen(!isNotiOpen)}>
+                <div className={`relative cursor-pointer transition-colors p-1.5 rounded-md ${isSandboxMode ? (isNotiOpen ? 'bg-indigo-800 text-indigo-200' : 'hover:bg-indigo-800/50 text-indigo-300') : (isNotiOpen ? 'bg-gray-100 text-blue-600' : 'text-gray-500 hover:text-blue-600 hover:bg-gray-50')}`} onClick={() => setIsNotiOpen(!isNotiOpen)}>
                     <VscBell size={20} />
                 </div>
              </div>
              
              <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
-                 <div className="w-7 h-7 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center text-xs text-blue-700 font-bold">
+                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border ${isSandboxMode ? 'bg-indigo-800 border-indigo-600 text-indigo-200' : 'bg-blue-100 border-blue-200 text-blue-700'}`}>
                      {displayInitial}
                  </div>
                  <span>{displayNickname} 님</span>
@@ -562,19 +497,19 @@ export default function MenuBar({ mode = 'personal' }) {
         </div>
 
         {!isRelocationPage && (
-            <div className="flex items-center justify-between px-4 h-9 bg-[#f8f9fa] border-t border-gray-100 relative" ref={menuRef}>
-              <div className="flex items-center gap-1 text-[13px] text-gray-700">
+            <div className={`flex items-center justify-between px-4 h-9 border-t relative transition-colors duration-700 ${isSandboxMode ? 'bg-slate-900 border-indigo-900/50' : 'bg-[#f8f9fa] border-gray-100'}`} ref={menuRef}>
+              <div className={`flex items-center gap-1 text-[13px] ${isSandboxMode ? 'text-indigo-200' : 'text-gray-700'}`}>
                   {subMenus.map(menu => (
                       <div key={menu.name} className="relative">
                           <div 
-                              className={`cursor-pointer px-3 py-1 rounded transition-colors ${activeMenu === menu.name ? 'bg-gray-200 font-medium' : 'hover:bg-gray-200'}`} 
+                              className={`cursor-pointer px-3 py-1 rounded transition-colors ${activeMenu === menu.name ? (isSandboxMode ? 'bg-indigo-800 text-white font-medium' : 'bg-gray-200 font-medium') : (isSandboxMode ? 'hover:bg-indigo-800/50' : 'hover:bg-gray-200')}`} 
                               onClick={() => setActiveMenu(activeMenu === menu.name ? null : menu.name)}
                           >
                               {menu.name}
                           </div>
                           
                           {activeMenu === menu.name && (
-                              <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 shadow-[0_4px_16px_rgba(0,0,0,0.1)] rounded-md py-1.5 z-[9999]">
+                              <div className="absolute left-0 top-full mt-1 w-56 bg-white border border-gray-200 shadow-[0_8px_30px_rgba(0,0,0,0.12)] rounded-md py-1.5 z-[9999] animate-fade-in-up">
                                   {menu.items.map((item, idx) => (
                                       <div 
                                           key={idx} 
@@ -591,14 +526,14 @@ export default function MenuBar({ mode = 'personal' }) {
                   ))}
                   
                   {mode === 'team' && (
-                      <div className="flex items-center gap-1.5 ml-3 border-l border-gray-300 pl-3 animate-fade-in">
-                          <div onClick={() => setIsTeamModalOpen(true)} className="cursor-pointer px-3 py-1 rounded-md font-extrabold text-blue-600 bg-blue-50/80 hover:bg-blue-100 hover:shadow-sm active:scale-95 transition-all border border-blue-100 flex items-center gap-1.5">
+                      <div className={`flex items-center gap-1.5 ml-3 border-l pl-3 animate-fade-in ${isSandboxMode ? 'border-indigo-700/50' : 'border-gray-300'}`}>
+                          <div onClick={() => setIsTeamModalOpen(true)} className={`cursor-pointer px-3 py-1 rounded-md font-extrabold flex items-center gap-1.5 transition-all border active:scale-95 ${isSandboxMode ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/40' : 'text-blue-600 bg-blue-50/80 hover:bg-blue-100 border-blue-100'}`}>
                               TEAM
                           </div>
-                          <div onClick={() => setIsVoiceChatModalOpen(true)} className="cursor-pointer flex items-center gap-1.5 px-3 py-1 rounded-md font-extrabold text-green-600 bg-green-50/80 hover:bg-green-100 hover:shadow-sm active:scale-95 transition-all border border-green-100">
+                          <div onClick={() => setIsVoiceChatModalOpen(true)} className={`cursor-pointer px-3 py-1 rounded-md font-extrabold flex items-center gap-1.5 transition-all border active:scale-95 ${isSandboxMode ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/40' : 'text-green-600 bg-green-50/80 hover:bg-green-100 border-green-100'}`}>
                               <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                               </span>
                               VoiceChat
                           </div>
@@ -607,68 +542,98 @@ export default function MenuBar({ mode = 'personal' }) {
               </div>
 
               <div className="flex items-center gap-3">
-                  <button onClick={() => dispatch(openProjectModal())} className="flex items-center gap-1 text-[12px] font-bold bg-[#333] text-white px-2.5 py-1 rounded hover:bg-black transition-colors"><VscAdd size={14} /> 새 프로젝트</button>
-                  <div className="w-[1px] h-4 bg-gray-300 mx-1"></div>
+                  <button onClick={() => dispatch(openProjectModal())} className={`flex items-center gap-1 text-[12px] font-bold px-2.5 py-1 rounded transition-colors ${isSandboxMode ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'bg-[#333] text-white hover:bg-black'}`}><VscAdd size={14} /> 새 프로젝트</button>
+                  <div className={`w-[1px] h-4 mx-1 ${isSandboxMode ? 'bg-indigo-800' : 'bg-gray-300'}`}></div>
                   
+                  <div className="flex items-center gap-1.5 mr-2">
+                      {mode === 'team' && activeProject && currentBranch === 'master' && (
+                          <button 
+                              onClick={() => setIsSandboxCreateModalOpen(true)}
+                              className="group flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-purple-100 to-indigo-50 text-indigo-700 hover:from-purple-200 hover:to-indigo-100 border border-indigo-200 rounded text-[11px] font-extrabold transition-all shadow-sm active:scale-95"
+                          >
+                              <VscLock className="group-hover:scale-110 transition-transform" size={14} /> 샌드박스 (혼자 작업)
+                          </button>
+                      )}
+                      
+                      {mode === 'team' && activeProject && isSandboxMode && (
+                          <button 
+                              onClick={() => setIsSandboxApplyModalOpen(true)}
+                              className="group flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-emerald-500 to-teal-400 text-white hover:from-emerald-400 hover:to-teal-300 border border-emerald-400/50 rounded text-[11px] font-extrabold transition-all shadow-[0_0_10px_rgba(16,185,129,0.4)] hover:shadow-[0_0_15px_rgba(16,185,129,0.6)] animate-pulse hover:animate-none active:scale-95"
+                          >
+                              <VscRocket className="group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform" size={14} /> 메인으로 합치기
+                          </button>
+                      )}
+                  </div>
+
                   <div className="relative" ref={branchRef}>
                       <div 
-                          className={`flex items-center gap-1.5 text-[11px] font-mono border px-2 py-0.5 rounded cursor-pointer transition-colors shadow-sm ${isBranchOpen ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`} 
+                          className={`flex items-center gap-1.5 text-[11px] font-mono border px-3 py-0.5 rounded cursor-pointer transition-all duration-300 shadow-sm ${isSandboxMode ? 'bg-indigo-900/50 border-indigo-500 text-indigo-300 hover:bg-indigo-800' : (isBranchOpen ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50')}`} 
                           onClick={() => {
                               if(!activeProject) return alert("좌측 탐색기에서 시작 프로젝트를 먼저 설정해주세요!");
                               setIsBranchOpen(!isBranchOpen);
                           }}
                       >
-                          <VscSourceControl size={12} className="text-blue-600" />
-                          <span className="font-semibold">{currentBranch}</span>
-                          <VscChevronDown size={12} className="text-gray-400" />
+                          <VscSourceControl size={13} className={isSandboxMode ? 'text-indigo-400' : 'text-blue-600'} />
+                          <span className="font-semibold tracking-wide">{currentBranch}</span>
+                          <VscChevronDown size={12} className={`transition-transform duration-300 ${isBranchOpen ? 'rotate-180' : ''} ${isSandboxMode ? 'text-indigo-500' : 'text-gray-400'}`} />
                       </div>
 
                       {isBranchOpen && (
-                          <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-gray-300 shadow-lg rounded-md py-2 z-[9999]">
-                              <div className="px-3 pb-2 border-b border-gray-100 mb-2">
-                                  <p className="text-xs font-bold text-gray-700 mb-1">Git Repository</p>
-                                  <p className="text-[10px] text-gray-500 truncate">Project: {activeProject}</p>
+                          <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] rounded-xl py-2 z-[9999] animate-fade-in-up origin-top-right">
+                              <div className="px-4 pb-3 border-b border-gray-100 mb-2 bg-gradient-to-r from-gray-50 to-white">
+                                  <p className="text-xs font-black text-gray-800 flex items-center gap-1.5"><VscSourceControl/> Git Repository</p>
+                                  <p className="text-[10px] text-gray-500 truncate mt-0.5 font-medium">{activeProject}</p>
                               </div>
                               
-                              <div className="max-h-40 overflow-y-auto custom-scrollbar">
-                                  {branches.map(branch => (
-                                      // 💡 [NEW] 브랜치 목록 렌더링 + 휴지통 아이콘 추가!
-                                      <div 
-                                          key={branch} 
-                                          onClick={() => handleSelectBranch(branch)}
-                                          className={`flex items-center justify-between px-4 py-2 cursor-pointer text-xs group transition-colors ${branch === currentBranch ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-700 hover:bg-gray-100'}`}
-                                      >
-                                          <div className="flex items-center gap-2">
-                                              <span>{branch}</span>
-                                              {branch === currentBranch && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded shadow-sm">Active</span>}
+                              <div className="max-h-48 overflow-y-auto custom-scrollbar px-2 space-y-1">
+                                  {visibleBranches.map(branch => {
+                                      const isActive = branch === currentBranch;
+                                      const isFocus = branch.startsWith('focus-');
+                                      return (
+                                          <div 
+                                              key={branch} 
+                                              onClick={() => handleSelectBranch(branch)}
+                                              className={`flex items-center justify-between px-3 py-2.5 cursor-pointer text-xs group transition-all rounded-lg ${isActive ? (isFocus ? 'bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 text-indigo-700 font-bold shadow-sm' : 'bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-100 text-blue-700 font-bold shadow-sm') : (isFocus ? 'bg-indigo-50/30 text-indigo-600 hover:bg-indigo-50' : 'text-gray-600 hover:bg-gray-50 border border-transparent')}`}
+                                          >
+                                              <div className="flex items-center gap-2">
+                                                  {isFocus ? <VscLock className={isActive ? "text-indigo-500" : "text-indigo-400"}/> : <VscSourceControl className={isActive ? "text-blue-500" : "text-gray-400"}/>}
+                                                  <span>{branch}</span>
+                                                  {isFocus && !isActive && <span className="text-[9px] font-bold bg-indigo-100 text-indigo-500 px-1 rounded">Sandbox</span>}
+                                                  {isActive && (
+                                                      <span className="relative flex h-2 w-2 ml-1">
+                                                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isFocus ? 'bg-indigo-400' : 'bg-blue-400'}`}></span>
+                                                          <span className={`relative inline-flex rounded-full h-2 w-2 ${isFocus ? 'bg-indigo-500' : 'bg-blue-500'}`}></span>
+                                                      </span>
+                                                  )}
+                                              </div>
+                                              {branch !== 'master' && (
+                                                  <button 
+                                                      onClick={(e) => handleDeleteBranch(e, branch)}
+                                                      className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded transition-all opacity-0 group-hover:opacity-100"
+                                                      title="브랜치 삭제"
+                                                  >
+                                                      <VscTrash size={14} />
+                                                  </button>
+                                              )}
                                           </div>
-                                          {branch !== 'master' && (
-                                              <button 
-                                                  onClick={(e) => handleDeleteBranch(e, branch)}
-                                                  className="text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50"
-                                                  title="브랜치 삭제"
-                                              >
-                                                  <VscTrash size={15} />
-                                              </button>
-                                          )}
-                                      </div>
-                                  ))}
+                                      );
+                                  })}
                               </div>
 
-                              <div className="px-3 pt-3 border-t border-gray-100 mt-2">
-                                  <p className="text-[10px] font-semibold text-gray-500 mb-1">Create New Branch</p>
-                                  <div className="flex items-center gap-1">
+                              <div className="px-4 pt-3 border-t border-gray-100 mt-2 bg-gray-50/50 rounded-b-xl pb-1">
+                                  <p className="text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-wider">Create Branch</p>
+                                  <div className="flex items-center gap-1.5">
                                       <input 
                                           type="text" 
-                                          placeholder="new-branch-name" 
+                                          placeholder="새 브랜치 이름" 
                                           value={newBranchName}
                                           onChange={(e) => setNewBranchName(e.target.value)}
-                                          className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 outline-none focus:border-blue-500"
+                                          className="flex-1 text-xs border border-gray-300 rounded-md px-2.5 py-1.5 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all bg-white"
                                       />
                                       <button 
                                           onClick={handleCreateBranch}
                                           disabled={isCreatingBranch || !newBranchName.trim()}
-                                          className="bg-gray-800 text-white p-1 rounded hover:bg-black disabled:opacity-50"
+                                          className="bg-gray-800 text-white p-1.5 rounded-md hover:bg-black transition-all disabled:opacity-50 active:scale-95"
                                       >
                                           {isCreatingBranch ? <VscRefresh className="animate-spin" size={14} /> : <VscAdd size={14}/>}
                                       </button>
@@ -711,19 +676,116 @@ export default function MenuBar({ mode = 'personal' }) {
                       </div>
                   )}
 
-                  {mode === 'team' ? (
-                      <span className="text-[11px] font-black bg-blue-600 text-white border border-blue-700 px-3 py-0.5 rounded-full shadow-sm select-none tracking-wider">
-                          TEAM
-                      </span>
-                  ) : (
-                      <span className="text-[11px] font-black bg-gray-200 text-gray-500 border border-gray-300 px-3 py-0.5 rounded-full shadow-sm select-none tracking-wider">
-                          SOLO
-                      </span>
-                  )}
+                  <span className={`text-[11px] font-black px-3 py-0.5 rounded-full shadow-sm select-none tracking-wider border ${isSandboxMode ? 'bg-indigo-600 text-white border-indigo-700' : (mode === 'team' ? 'bg-blue-600 text-white border-blue-700' : 'bg-gray-200 text-gray-500 border-gray-300')}`}>
+                      {isSandboxMode ? 'SANDBOX' : (mode === 'team' ? 'TEAM' : 'SOLO')}
+                  </span>
               </div>
             </div>
         )}
       </div>
+
+      {/* ========================================================================= */}
+      {/* 💡 [CUSTOM MODALS & LOADERS] UI 화려함의 끝판왕 */}
+      {/* ========================================================================= */}
+
+      {fullScreenLoading.isOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex flex-col items-center justify-center animate-fade-in">
+              <div className="bg-white/10 p-6 rounded-3xl backdrop-blur-md border border-white/20 shadow-2xl flex flex-col items-center justify-center animate-pulse">
+                  <VscBeaker className="text-indigo-400 mb-4 animate-bounce" size={48} />
+                  <h2 className="text-xl font-extrabold text-white tracking-tight">{fullScreenLoading.text}</h2>
+                  <div className="w-48 h-1 bg-indigo-900/50 rounded-full mt-5 overflow-hidden">
+                      <div className="w-1/2 h-full bg-indigo-400 rounded-full animate-[ping_1.5s_ease-in-out_infinite]"></div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {isSandboxCreateModalOpen && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999] flex items-center justify-center animate-fade-in" onClick={() => setIsSandboxCreateModalOpen(false)}>
+              <div className="bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] w-[440px] overflow-hidden flex flex-col animate-slide-up ring-1 ring-black/5" onClick={e => e.stopPropagation()}>
+                  <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-6 border-b border-indigo-100 flex justify-between items-start">
+                      <div>
+                          <div className="flex items-center gap-2 mb-1">
+                              <div className="bg-indigo-100 p-1.5 rounded-lg"><VscLock className="text-indigo-600" size={20}/></div>
+                              <h2 className="text-xl font-black text-indigo-900 tracking-tight">나만의 집중 공간 만들기</h2>
+                          </div>
+                          <p className="text-[13px] text-indigo-700/80 font-medium">다른 팀원에게 영향을 주지 않고 코드를 테스트해보세요.</p>
+                      </div>
+                      <button onClick={() => setIsSandboxCreateModalOpen(false)} className="text-gray-400 hover:text-gray-800 bg-white/50 hover:bg-white p-1.5 rounded-full transition-colors"><VscClose size={20}/></button>
+                  </div>
+                  <div className="p-6 bg-white space-y-5">
+                      <div className="space-y-2">
+                          <label className="text-[13px] font-extrabold text-gray-800">어떤 작업을 진행하시나요?</label>
+                          <input 
+                              type="text" 
+                              value={sandboxTaskName}
+                              onChange={(e) => setSandboxTaskName(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && executeCreateSandbox()}
+                              placeholder="예) 로그인 에러 수정, 헤더 UI 변경" 
+                              className="w-full px-4 py-3 border border-gray-300 rounded-xl text-[14px] outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 transition-all font-medium" 
+                              autoFocus
+                          />
+                      </div>
+                      <button 
+                          onClick={executeCreateSandbox}
+                          disabled={!sandboxTaskName.trim()}
+                          className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white rounded-xl text-[14px] font-bold shadow-lg shadow-indigo-200 transition-all disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2"
+                      >
+                          공간 생성 및 이동하기
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* 💡 [NEW] 커밋 메시지를 입력받는 병합 전용 모달 */}
+      {isSandboxApplyModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center animate-fade-in" onClick={() => setIsSandboxApplyModalOpen(false)}>
+              <div className="bg-white rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.4)] w-[460px] overflow-hidden flex flex-col animate-slide-up" onClick={e => e.stopPropagation()}>
+                  <div className="p-8 pb-6 text-center flex flex-col items-center border-b border-gray-100">
+                      <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-5 border-4 border-white shadow-md relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-200 opacity-50"></span>
+                          <VscRocket className="text-emerald-600" size={32} />
+                      </div>
+                      <h2 className="text-xl font-black text-gray-900 mb-2 tracking-tight">메인 코드로 병합 (Merge)</h2>
+                      <p className="text-[13px] text-gray-500 font-medium leading-relaxed">
+                          작업하신 내용을 안전하게 저장하고 <strong className="text-emerald-600 font-black">master</strong> 브랜치에 합칩니다.
+                      </p>
+                  </div>
+                  
+                  <div className="p-6 bg-gray-50 space-y-3">
+                      <label className="text-[12px] font-bold text-gray-700 flex items-center gap-1.5">
+                          <VscSourceControl /> 병합 커밋 메시지 작성
+                      </label>
+                      <input 
+                          type="text" 
+                          value={mergeCommitMessage}
+                          onChange={(e) => setMergeCommitMessage(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && executeApplySandbox()}
+                          placeholder="예) 로그인 화면 레이아웃 수정 완료" 
+                          className="w-full px-4 py-3 border border-gray-300 rounded-xl text-[13px] outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-all font-medium bg-white" 
+                          autoFocus
+                      />
+                  </div>
+
+                  <div className="flex border-t border-gray-100 p-4 gap-3 bg-white">
+                      <button 
+                          onClick={() => setIsSandboxApplyModalOpen(false)}
+                          className="flex-1 py-3 bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 active:scale-95 rounded-xl text-[13px] font-bold transition-all shadow-sm"
+                      >
+                          취소
+                      </button>
+                      <button 
+                          onClick={executeApplySandbox}
+                          disabled={!mergeCommitMessage.trim()}
+                          className="flex-[2] py-3 bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white rounded-xl text-[13px] font-bold shadow-md shadow-emerald-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100"
+                      >
+                          <VscCheck size={16} strokeWidth={1} /> 커밋 및 병합하기
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {isTeamModalOpen && mode === 'team' && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9998] flex items-center justify-center animate-fade-in" onClick={() => setIsTeamModalOpen(false)}>
